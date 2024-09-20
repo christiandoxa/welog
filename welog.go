@@ -10,26 +10,28 @@ import (
 	"time"
 )
 
-func NewFiber(c *fiber.Ctx, requestIDContextName ...string) error {
-	contextName := "requestid"
+func NewFiber(requestIDContextName ...string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		contextName := "requestid"
 
-	if len(requestIDContextName) > 0 && requestIDContextName[0] != "" {
-		contextName = requestIDContextName[0]
-	}
+		if len(requestIDContextName) > 0 && requestIDContextName[0] != "" {
+			contextName = requestIDContextName[0]
+		}
 
-	c.Locals(generalkey.Logger, logger.Logger().WithField(generalkey.RequestID, c.Locals(contextName)))
-	c.Locals(generalkey.ClientLog, []logrus.Fields{})
+		c.Locals(generalkey.Logger, logger.Logger().WithField(generalkey.RequestID, c.Locals(contextName)))
+		c.Locals(generalkey.ClientLog, []logrus.Fields{})
 
-	reqTime := time.Now()
+		reqTime := time.Now()
 
-	if err := c.Next(); err != nil {
+		if err := c.Next(); err != nil {
+			logFiber(c, reqTime)
+			return err
+		}
+
 		logFiber(c, reqTime)
-		return err
+
+		return nil
 	}
-
-	logFiber(c, reqTime)
-
-	return nil
 }
 
 func logFiber(c *fiber.Ctx, reqTime time.Time) {

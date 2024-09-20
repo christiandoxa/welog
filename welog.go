@@ -24,17 +24,17 @@ func NewFiber(requestIDContextName ...string) fiber.Handler {
 		reqTime := time.Now()
 
 		if err := c.Next(); err != nil {
-			logFiber(c, reqTime)
+			logFiber(c, reqTime, contextName)
 			return err
 		}
 
-		logFiber(c, reqTime)
+		logFiber(c, reqTime, contextName)
 
 		return nil
 	}
 }
 
-func logFiber(c *fiber.Ctx, reqTime time.Time) {
+func logFiber(c *fiber.Ctx, reqTime time.Time, contextName string) {
 	latency := time.Since(reqTime)
 
 	currentUser, err := user.Current()
@@ -58,7 +58,7 @@ func logFiber(c *fiber.Ctx, reqTime time.Time) {
 		"requestContentType":   c.Get("Content-Type"),
 		"requestHeader":        c.GetReqHeaders(),
 		"requestHostName":      c.Hostname(),
-		"requestId":            c.Locals(generalkey.RequestID),
+		"requestId":            c.Locals(contextName),
 		"requestIp":            c.IP(),
 		"requestMethod":        c.Method(),
 		"requestProtocol":      c.Protocol(),

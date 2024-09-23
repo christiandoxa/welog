@@ -25,6 +25,7 @@ func TestNewFiber(t *testing.T) {
 	// Mock a request
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("User-Agent", "Test-Agent")
+	req.Host = "localhost"
 
 	// Record response
 	resp, err := app.Test(req) //nolint:bodyclose

@@ -14,13 +14,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: 1.23.1
+
+      - name: Install Docker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker.io docker-compose-plugin
+          sudo systemctl start docker
+          sudo systemctl enable docker
+          docker --version
+          docker compose version
+
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Copy .env.example to .env
         run: cp .env.example .env
@@ -38,6 +47,17 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Clone docker-elk repository
+        run: git clone https://github.com/deviantony/docker-elk.git
+
+      - name: Set up Docker environment
+        working-directory: docker-elk
+        run: docker compose up setup
+
+      - name: Start Docker environment
+        working-directory: docker-elk
+        run: docker compose up -d
+
       - name: Run tests
         run: go test ./... -v
 
@@ -48,8 +68,3 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-results
-          path: |
-            lint-report.txt

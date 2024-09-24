@@ -34,7 +34,7 @@ go get github.com/joho/godotenv
 To use the `welog` middleware in a Fiber application, add the middleware as follows:
 
 ```go
-app.Use(welog.NewFiber())
+app.Use(welog.NewFiber(fiber.Config{}))
 ```
 
 ### Logging Client Requests
@@ -95,10 +95,12 @@ func main() {
         log.Fatal("Error loading .env file")
     }
 
-    app := fiber.New()
+    config := fiber.Config{}
+
+    app := fiber.New(config)
 
     // Use the welog middleware
-    app.Use(welog.NewFiber())
+    app.Use(welog.NewFiber(config))
 
     app.Get("/", func(c *fiber.Ctx) error {
         // Your handler code
@@ -108,6 +110,23 @@ func main() {
     app.Listen(":3000")
 }
 ```
+### Running Tests
+
+The `welog` library includes several test cases to verify the functionality of its middleware and logging functions. To run the tests, make sure you have Go installed and set up in your environment. Below are the steps to run the test cases provided in the code:
+
+1. **Ensure Dependencies Are Installed**: Make sure all required dependencies for testing, such as `github.com/stretchr/testify`, are installed. You can install them using:
+
+   ```bash
+   go get github.com/stretchr/testify
+   ```
+
+2. **Run the Tests**: You can run the tests using the `go test` command. Navigate to the directory containing the test files and execute:
+
+   ```bash
+   go test -v
+   ```
+
+   The `-v` flag is used for verbose output, showing detailed information about each test.
 
 ### License
 

@@ -23,10 +23,34 @@ func init() {
 	}
 }
 
-// NewFiber returns a new Fiber middleware handler that injects a logger with
-// request-specific fields into the context of each request. It also logs the
-// request and response details after each request is processed.
-func NewFiber(requestIDContextName ...string) fiber.Handler {
+// NewFiber creates a new Fiber middleware handler that sets up context for
+// request logging and error handling. It adds request-specific loggers and
+// context fields to each incoming request. The middleware handles errors
+// using a custom or default error handler and logs request details.
+//
+// Parameters:
+//   - config: A fiber.Config object that contains Fiber configuration,
+//     including custom error handlers if any.
+//   - requestIDContextName (optional): A variadic string parameter that
+//     specifies the context key name for the request ID. If not provided,
+//     the default key "requestid" is used.
+//
+// Returns:
+//   - fiber.Handler: A Fiber handler function that can be used as middleware
+//     in a Fiber application.
+//
+// Usage:
+//
+//	app := fiber.New()
+//	app.Use(NewFiber(config, "customRequestID"))
+//
+// Behavior:
+//   - Sets up a logger and client log fields in the context using the request ID.
+//   - Logs request and response details along with any errors encountered during
+//     request processing.
+//   - Handles errors using the custom error handler if provided in the config,
+//     otherwise uses the default Fiber error handler.
+func NewFiber(config fiber.Config, requestIDContextName ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		contextName := "requestid"
 
@@ -42,8 +66,18 @@ func NewFiber(requestIDContextName ...string) fiber.Handler {
 
 		// Process the next handler in the chain
 		if err := c.Next(); err != nil {
-			logFiber(c, reqTime, contextName)
-			return err
+			errorHandler := fiber.DefaultErrorHandler
+
+			// Use custom error handler if provided
+			if config.ErrorHandler != nil {
+				errorHandler = config.ErrorHandler
+			}
+
+			// Log the error
+			if err = errorHandler(c, err); err != nil {
+				logFiber(c, reqTime, contextName)
+				return err
+			}
 		}
 
 		// Log request and response details

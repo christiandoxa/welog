@@ -1,97 +1,79 @@
-// Package welog provides middleware and logging utilities for Fiber web applications.
-// It integrates with logrus for structured logging and supports detailed request
-// and response logging for HTTP requests.
 package welog
 
 import (
+	"bytes"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
+	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
+	"io"
 	"os/user"
 	"time"
 )
 
-// init loads environment variables from a .env file. If the .env file is not found
-// or cannot be loaded, the application will terminate with a fatal error.
+// Initialize the package by loading environment variables from a .env file.
 func init() {
-	// Load environment variables from .env file
 	if err := godotenv.Load(); err != nil {
 		logrus.Fatal("Error loading .env file")
 	}
 }
 
-// NewFiber creates a new Fiber middleware handler that sets up context for
-// request logging and error handling. It adds request-specific loggers and
-// context fields to each incoming request. The middleware handles errors
-// using a custom or default error handler and logs request details.
-//
-// Parameters:
-//   - config: A fiber.Config object that contains Fiber configuration,
-//     including custom error handlers if any.
-//   - requestIDContextName (optional): A variadic string parameter that
-//     specifies the context key name for the request ID. If not provided,
-//     the default key "requestid" is used.
-//
-// Returns:
-//   - fiber.Handler: A Fiber handler function that can be used as middleware
-//     in a Fiber application.
-//
-// Usage:
-//
-//	app := fiber.New()
-//	app.Use(NewFiber(config, "customRequestID"))
-//
-// Behavior:
-//   - Sets up a logger and client log fields in the context using the request ID.
-//   - Logs request and response details along with any errors encountered during
-//     request processing.
-//   - Handles errors using the custom error handler if provided in the config,
-//     otherwise uses the default Fiber error handler.
-func NewFiber(config fiber.Config, requestIDContextName ...string) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		contextName := "requestid"
+// responseBodyWriter is a custom response writer that captures the response body.
+type responseBodyWriter struct {
+	gin.ResponseWriter
+	body *bytes.Buffer
+}
 
-		if len(requestIDContextName) > 0 && requestIDContextName[0] != "" {
-			contextName = requestIDContextName[0]
+// Write writes the response body to both the underlying ResponseWriter and the buffer.
+func (w responseBodyWriter) Write(b []byte) (int, error) {
+	w.body.Write(b)
+	return w.ResponseWriter.Write(b)
+}
+
+// NewFiber creates a new Fiber middleware that logs requests and responses.
+func NewFiber(config fiber.Config) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Generate or retrieve the request ID.
+		requestID := c.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.NewString()
 		}
 
-		// Add logger and client log fields to the context
-		c.Locals(generalkey.Logger, logger.Logger().WithField(generalkey.RequestID, c.Locals(contextName)))
+		// Set request-related values to the context.
+		c.Locals(generalkey.RequestID, requestID)
+		c.Locals(generalkey.Logger, logger.Logger().WithField(generalkey.RequestID, requestID))
 		c.Locals(generalkey.ClientLog, []logrus.Fields{})
 
 		reqTime := time.Now()
 
-		// Process the next handler in the chain
+		// Proceed to the next middleware and handle any errors.
 		if err := c.Next(); err != nil {
 			errorHandler := fiber.DefaultErrorHandler
-
-			// Use custom error handler if provided
 			if config.ErrorHandler != nil {
 				errorHandler = config.ErrorHandler
 			}
-
-			// Log the error
 			if err = errorHandler(c, err); err != nil {
-				logFiber(c, reqTime, contextName)
+				logFiber(c, reqTime)
 				return err
 			}
 		}
 
-		// Log request and response details
-		logFiber(c, reqTime, contextName)
+		// Log the request and response details.
+		logFiber(c, reqTime)
 
 		return nil
 	}
 }
 
-// logFiber logs the details of a request and response in the Fiber context.
-// It captures various request/response information including headers, body, status, and latency.
-func logFiber(c *fiber.Ctx, reqTime time.Time, contextName string) {
-	latency := time.Since(reqTime)
+// logFiber logs the details of the Fiber request and response.
+func logFiber(c *fiber.Ctx, requestTime time.Time) {
+	latency := time.Since(requestTime)
 
+	// Get the current user; if not available, set as "unknown".
 	currentUser, err := user.Current()
 	if err != nil {
 		c.Locals(generalkey.Logger).(*logrus.Entry).Error(err)
@@ -99,14 +81,12 @@ func logFiber(c *fiber.Ctx, reqTime time.Time, contextName string) {
 	}
 
 	var request, response logrus.Fields
-
-	// Unmarshal request and response bodies into logrus fields
 	_ = json.Unmarshal(c.Body(), &request)
 	_ = json.Unmarshal(c.Response().Body(), &response)
 
 	clientLog := c.Locals(generalkey.ClientLog).([]logrus.Fields)
 
-	// Log the request and response details
+	// Log various details of the request and response.
 	c.Locals(generalkey.Logger).(*logrus.Entry).WithFields(logrus.Fields{
 		"requestAgent":         c.Get("User-Agent"),
 		"requestBody":          request,
@@ -114,49 +94,176 @@ func logFiber(c *fiber.Ctx, reqTime time.Time, contextName string) {
 		"requestContentType":   c.Get("Content-Type"),
 		"requestHeader":        c.GetReqHeaders(),
 		"requestHostName":      c.Hostname(),
-		"requestId":            c.Locals(contextName),
+		"requestId":            c.Locals(generalkey.RequestID),
 		"requestIp":            c.IP(),
 		"requestMethod":        c.Method(),
 		"requestProtocol":      c.Protocol(),
-		"requestTimestamp":     reqTime.Format(time.RFC3339Nano),
+		"requestTimestamp":     requestTime.Format(time.RFC3339Nano),
 		"requestUrl":           c.BaseURL() + c.OriginalURL(),
 		"responseBody":         response,
 		"responseBodyString":   string(c.Response().Body()),
 		"responseHeaderString": c.Response().Header.String(),
 		"responseLatency":      latency.String(),
 		"responseStatus":       c.Response().StatusCode(),
-		"responseTimestamp":    reqTime.Add(latency).Format(time.RFC3339Nano),
+		"responseTimestamp":    requestTime.Add(latency).Format(time.RFC3339Nano),
 		"responseUser":         currentUser.Username,
 		"target":               clientLog,
 	}).Info()
 }
 
-// LogFiberClient logs details about an external HTTP request made by the Fiber application.
-// It records the request and response data, headers, method, status, and latency into the context.
-func LogFiberClient(c *fiber.Ctx, url string, method string, contentType string, header map[string]interface{}, body []byte, response []byte, status int, start time.Time, elapsed time.Duration) {
+// LogFiberClient logs a custom client request and response for Fiber.
+func LogFiberClient(
+	c *fiber.Ctx,
+	requestURL string,
+	requestMethod string,
+	requestContentType string,
+	requestHeader map[string]interface{},
+	requestBody []byte,
+	responseHeader map[string]interface{},
+	responseBody []byte,
+	responseStatus int,
+	requestTime time.Time,
+	responseLatency time.Duration,
+) {
 	var requestField, responseField logrus.Fields
 
-	// Unmarshal request and response bodies into logrus fields
-	_ = json.Unmarshal(body, &requestField)
-	_ = json.Unmarshal(response, &responseField)
+	_ = json.Unmarshal(requestBody, &requestField)
+	_ = json.Unmarshal(responseBody, &responseField)
 
-	// Prepare log data for the external request
 	logData := logrus.Fields{
-		"targetRequestHeader":      header,
 		"targetRequestBody":        requestField,
-		"targetRequestBodyString":  string(body),
-		"targetRequestContentType": contentType,
-		"targetRequestMethod":      method,
-		"targetRequestTimestamp":   start.Format(time.RFC3339Nano),
-		"targetRequestURL":         url,
+		"targetRequestBodyString":  string(requestBody),
+		"targetRequestContentType": requestContentType,
+		"targetRequestHeader":      requestHeader,
+		"targetRequestMethod":      requestMethod,
+		"targetRequestTimestamp":   requestTime.Format(time.RFC3339Nano),
+		"targetRequestURL":         requestURL,
 		"targetResponseBody":       responseField,
-		"targetResponseBodyString": string(response),
-		"targetResponseLatency":    elapsed.String(),
-		"targetResponseStatus":     status,
-		"targetResponseTimestamp":  start.Add(elapsed).Format(time.RFC3339Nano),
+		"targetResponseBodyString": string(responseBody),
+		"targetResponseHeader":     responseHeader,
+		"targetResponseLatency":    responseLatency.String(),
+		"targetResponseStatus":     responseStatus,
+		"targetResponseTimestamp":  requestTime.Add(responseLatency).Format(time.RFC3339Nano),
 	}
 
-	// Append log data to the client log context
 	clientLog := c.Locals(generalkey.ClientLog).([]logrus.Fields)
 	c.Locals(generalkey.ClientLog, append(clientLog, logData))
+}
+
+// NewGin creates a new Gin middleware that logs requests and responses.
+func NewGin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Generate or retrieve the request ID.
+		requestID := c.GetHeader("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.NewString()
+		}
+
+		// Set request-related values to the context.
+		c.Set(generalkey.RequestID, requestID)
+		c.Set(generalkey.Logger, logger.Logger().WithField(generalkey.RequestID, requestID))
+		c.Set(generalkey.ClientLog, []logrus.Fields{})
+
+		// Create a response writer that captures the response body.
+		bodyBuf := &bytes.Buffer{}
+		writer := responseBodyWriter{body: bodyBuf, ResponseWriter: c.Writer}
+		c.Writer = writer
+
+		requestTime := time.Now()
+
+		// Proceed to the next middleware.
+		c.Next()
+
+		// Log the request and response details.
+		logGin(c, bodyBuf, requestTime)
+	}
+}
+
+// logGin logs the details of the Gin request and response.
+func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
+	latency := time.Since(requestTime)
+
+	currentUser, _ := user.Current()
+
+	var request, response logrus.Fields
+	bodyBytes, _ := io.ReadAll(c.Request.Body)
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	_ = json.Unmarshal(bodyBytes, &request)
+
+	responseBody := buf.Bytes()
+	_ = json.Unmarshal(responseBody, &response)
+
+	clientLog, _ := c.Get(generalkey.ClientLog)
+	clientLogFields := clientLog.([]logrus.Fields)
+
+	log, _ := c.Get(generalkey.Logger)
+	entry := log.(*logrus.Entry)
+
+	// Log various details of the request and response.
+	entry.WithFields(logrus.Fields{
+		"requestAgent":       c.GetHeader("User-Agent"),
+		"requestBody":        request,
+		"requestBodyString":  string(bodyBytes),
+		"requestContentType": c.GetHeader("Content-Type"),
+		"requestHeader":      c.Request.Header,
+		"requestHostName":    c.Request.Host,
+		"requestId":          c.GetString(generalkey.RequestID),
+		"requestIp":          c.ClientIP(),
+		"requestMethod":      c.Request.Method,
+		"requestProtocol":    c.Request.Proto,
+		"requestTimestamp":   requestTime.Format(time.RFC3339Nano),
+		"requestUrl":         c.Request.RequestURI,
+		"responseBody":       response,
+		"responseBodyString": string(responseBody),
+		"responseHeader":     c.Writer.Header(),
+		"responseLatency":    latency.String(),
+		"responseStatus":     c.Writer.Status(),
+		"responseTimestamp":  requestTime.Add(latency).Format(time.RFC3339Nano),
+		"responseUser":       currentUser.Username,
+		"target":             clientLogFields,
+	}).Info()
+}
+
+// LogGinClient logs a custom client request and response for Gin.
+func LogGinClient(
+	c *gin.Context,
+	requestURL string,
+	requestMethod string,
+	requestContentType string,
+	requestHeader map[string]interface{},
+	requestBody []byte,
+	responseHeader map[string]interface{},
+	responseBody []byte,
+	responseStatus int,
+	requestTime time.Time,
+	responseLatency time.Duration,
+) {
+	var requestField, responseField logrus.Fields
+
+	_ = json.Unmarshal(requestBody, &requestField)
+	_ = json.Unmarshal(responseBody, &responseField)
+
+	logData := logrus.Fields{
+		"targetRequestBody":        requestField,
+		"targetRequestBodyString":  string(requestBody),
+		"targetRequestContentType": requestContentType,
+		"targetRequestHeader":      requestHeader,
+		"targetRequestMethod":      requestMethod,
+		"targetRequestTimestamp":   requestTime.Format(time.RFC3339Nano),
+		"targetRequestURL":         requestURL,
+		"targetResponseBody":       responseField,
+		"targetResponseBodyString": string(responseBody),
+		"targetResponseHeader":     responseHeader,
+		"targetResponseLatency":    responseLatency.String(),
+		"targetResponseStatus":     responseStatus,
+		"targetResponseTimestamp":  requestTime.Add(responseLatency).Format(time.RFC3339Nano),
+	}
+
+	clientLog, exists := c.Get(generalkey.ClientLog)
+	if !exists {
+		clientLog = []logrus.Fields{}
+	}
+
+	clientLog = append(clientLog.([]logrus.Fields), logData)
+	c.Set(generalkey.ClientLog, clientLog)
 }

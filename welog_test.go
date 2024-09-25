@@ -78,6 +78,7 @@ func TestLogFiberClient(t *testing.T) {
 	method := "GET"
 	contentType := "application/json"
 	header := map[string]interface{}{"Content-Type": "application/json"}
+	responseHeader := map[string]interface{}{"Content-Type": "application/json"}
 	body := []byte(`{"test": "data"}`)
 	response := []byte(`{"response": "ok"}`)
 	status := http.StatusOK
@@ -85,7 +86,7 @@ func TestLogFiberClient(t *testing.T) {
 	elapsed := 100 * time.Millisecond
 
 	// Call LogFiberClient function
-	LogFiberClient(fiberCtx, url, method, contentType, header, body, response, status, start, elapsed)
+	LogFiberClient(fiberCtx, url, method, contentType, header, body, responseHeader, response, status, start, elapsed)
 
 	// Verify that the log data was appended to the client log
 	clientLog := fiberCtx.Locals(generalkey.ClientLog).([]logrus.Fields)

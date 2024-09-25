@@ -89,10 +89,12 @@ func NewFiber(config fiber.Config, requestIDContextName ...string) fiber.Handler
 
 // logFiber logs the details of a request and response in the Fiber context.
 // It captures various request/response information including headers, body, status, and latency.
-func logFiber(c *fiber.Ctx, reqTime time.Time, contextName string) {
-	latency := time.Since(reqTime)
+func logFiber(c *fiber.Ctx, requestTime time.Time, contextName string) {
+	latency := time.Since(requestTime)
 
+	// Get the current user
 	currentUser, err := user.Current()
+
 	if err != nil {
 		c.Locals(generalkey.Logger).(*logrus.Entry).Error(err)
 		currentUser = &user.User{Username: "unknown"}
@@ -118,42 +120,82 @@ func logFiber(c *fiber.Ctx, reqTime time.Time, contextName string) {
 		"requestIp":            c.IP(),
 		"requestMethod":        c.Method(),
 		"requestProtocol":      c.Protocol(),
-		"requestTimestamp":     reqTime.Format(time.RFC3339Nano),
+		"requestTimestamp":     requestTime.Format(time.RFC3339Nano),
 		"requestUrl":           c.BaseURL() + c.OriginalURL(),
 		"responseBody":         response,
 		"responseBodyString":   string(c.Response().Body()),
 		"responseHeaderString": c.Response().Header.String(),
 		"responseLatency":      latency.String(),
 		"responseStatus":       c.Response().StatusCode(),
-		"responseTimestamp":    reqTime.Add(latency).Format(time.RFC3339Nano),
+		"responseTimestamp":    requestTime.Add(latency).Format(time.RFC3339Nano),
 		"responseUser":         currentUser.Username,
 		"target":               clientLog,
 	}).Info()
 }
 
-// LogFiberClient logs details about an external HTTP request made by the Fiber application.
-// It records the request and response data, headers, method, status, and latency into the context.
-func LogFiberClient(c *fiber.Ctx, url string, method string, contentType string, header map[string]interface{}, body []byte, response []byte, status int, start time.Time, elapsed time.Duration) {
+// LogFiberClient logs the details of an HTTP client request and its corresponding response within a Fiber context.
+//
+// This function extracts and logs various aspects of the HTTP request and response, including headers,
+// bodies, status codes, timestamps, and latency. It unmarshal the JSON-encoded request and response
+// bodies into structured log fields and appends this information to the client's log context.
+//
+// Parameters:
+//   - c: The Fiber context (`*fiber.Ctx`) in which the logging occurs.
+//   - requestURL: The URL of the HTTP request as a string.
+//   - requestMethod: The HTTP method used for the request (e.g., "GET", "POST").
+//   - requestContentType: The Content-Type header of the request as a string.
+//   - requestHeader: A map containing the request headers (`map[string]interface{}`).
+//   - requestBody: The body of the HTTP request as a byte slice (`[]byte`).
+//   - responseHeader: A map containing the response headers (`map[string]interface{}`).
+//   - responseBody: The body of the HTTP response as a byte slice (`[]byte`).
+//   - responseStatus: The HTTP status code of the response as an integer.
+//   - requestTime: A `time.Time` object representing when the request was made.
+//   - responseLatency: A `time.Duration` representing the time taken to receive the response.
+//
+// Behavior:
+//   - Attempts to unmarshal the JSON-encoded `requestBody` and `responseBody` into `logrus.Fields`.
+//     Errors during unmarshalling are ignored.
+//   - Constructs a `logrus.Fields` map containing detailed information about the request and response.
+//   - Retrieves the existing client log from the Fiber context, appends the new log data, and stores it back
+//     in the context under the key specified by `generalkey.ClientLog`.
+//
+// Example:
+//
+//	LogFiberClient(c, "https://api.example.com/data", "POST", "application/json", reqHeaders, reqBody, respHeaders, respBody, 200, time.Now(), time.Since(start))
+func LogFiberClient(
+	c *fiber.Ctx,
+	requestURL string,
+	requestMethod string,
+	requestContentType string,
+	requestHeader map[string]interface{},
+	requestBody []byte,
+	responseHeader map[string]interface{},
+	responseBody []byte,
+	responseStatus int,
+	requestTime time.Time,
+	responseLatency time.Duration,
+) {
 	var requestField, responseField logrus.Fields
 
 	// Unmarshal request and response bodies into logrus fields
-	_ = json.Unmarshal(body, &requestField)
-	_ = json.Unmarshal(response, &responseField)
+	_ = json.Unmarshal(requestBody, &requestField)
+	_ = json.Unmarshal(responseBody, &responseField)
 
 	// Prepare log data for the external request
 	logData := logrus.Fields{
-		"targetRequestHeader":      header,
 		"targetRequestBody":        requestField,
-		"targetRequestBodyString":  string(body),
-		"targetRequestContentType": contentType,
-		"targetRequestMethod":      method,
-		"targetRequestTimestamp":   start.Format(time.RFC3339Nano),
-		"targetRequestURL":         url,
+		"targetRequestBodyString":  string(requestBody),
+		"targetRequestContentType": requestContentType,
+		"targetRequestHeader":      requestHeader,
+		"targetRequestMethod":      requestMethod,
+		"targetRequestTimestamp":   requestTime.Format(time.RFC3339Nano),
+		"targetRequestURL":         requestURL,
 		"targetResponseBody":       responseField,
-		"targetResponseBodyString": string(response),
-		"targetResponseLatency":    elapsed.String(),
-		"targetResponseStatus":     status,
-		"targetResponseTimestamp":  start.Add(elapsed).Format(time.RFC3339Nano),
+		"targetResponseBodyString": string(responseBody),
+		"targetResponseHeader":     responseHeader,
+		"targetResponseLatency":    responseLatency.String(),
+		"targetResponseStatus":     responseStatus,
+		"targetResponseTimestamp":  requestTime.Add(responseLatency).Format(time.RFC3339Nano),
 	}
 
 	// Append log data to the client log context

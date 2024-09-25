@@ -9,7 +9,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
-	github.com/valyala/fasthttp v1.55.0
+	github.com/valyala/fasthttp v1.56.0
 	go.elastic.co/ecslogrus v1.0.0
 	gopkg.in/go-extras/elogrus.v8 v8.0.1
 )

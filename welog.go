@@ -4,12 +4,16 @@
 package welog
 
 import (
+	"bytes"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
+	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
+	"io"
 	"os/user"
 	"time"
 )
@@ -21,6 +25,16 @@ func init() {
 	if err := godotenv.Load(); err != nil {
 		logrus.Fatal("Error loading .env file")
 	}
+}
+
+type responseBodyWriter struct {
+	gin.ResponseWriter
+	body *bytes.Buffer
+}
+
+func (w responseBodyWriter) Write(b []byte) (int, error) {
+	w.body.Write(b)
+	return w.ResponseWriter.Write(b)
 }
 
 // NewFiber creates a new Fiber middleware handler that sets up context for
@@ -201,4 +215,190 @@ func LogFiberClient(
 	// Append log data to the client log context
 	clientLog := c.Locals(generalkey.ClientLog).([]logrus.Fields)
 	c.Locals(generalkey.ClientLog, append(clientLog, logData))
+}
+
+// NewGin returns a gin.HandlerFunc middleware that adds a request ID to the context,
+// sets up a logger with the request ID, and captures the response body for logging purposes.
+// It also logs the request and response details after the request is processed.
+//
+// The middleware performs the following actions:
+// 1. Retrieves the request ID from the "X-Request-ID" header. If the header is not present, it generates a new UUID as the request ID.
+// 2. Sets the request ID into the context with the key defined by `generalkey.RequestID`.
+// 3. Sets a logger into the context with the request ID field for structured logging purposes.
+// 4. Initializes an empty slice of logrus.Fields and sets it in the context with the key `generalkey.ClientLog`.
+// 5. Wraps the response writer to capture the response body for logging.
+// 6. Logs the request and response details using the `logGin` function after the request is completed.
+//
+// Returns:
+// gin.HandlerFunc - The configured middleware handler function.
+func NewGin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requestID := c.GetHeader("X-Request-ID")
+
+		if requestID == "" {
+			requestID = uuid.NewString()
+		}
+
+		c.Set(generalkey.RequestID, requestID)
+
+		c.Set(generalkey.Logger, logger.Logger().WithField(generalkey.RequestID, requestID))
+
+		c.Set(generalkey.ClientLog, []logrus.Fields{})
+
+		bodyBuf := &bytes.Buffer{}
+
+		writer := responseBodyWriter{body: bodyBuf, ResponseWriter: c.Writer}
+
+		c.Writer = writer
+
+		requestTime := time.Now()
+
+		c.Next()
+
+		logGin(c, bodyBuf, requestTime)
+	}
+}
+
+// logGin logs the details of an HTTP request and response using the Gin framework and Logrus.
+//
+// This function captures request and response data, including headers, body content, and timing
+// information, and logs them with additional fields using a Logrus entry.
+//
+// Parameters:
+//   - c: The current Gin context, which holds the request, response, and various context data.
+//   - buf: A buffer that contains the response body data to be logged.
+//   - requestTime: The time when the request was received, used to calculate latency.
+//
+// The function performs the following steps:
+//  1. Calculates the latency between the request and response.
+//  2. Retrieves the current user from the system.
+//  3. Reads and unmarshal the request body into a logrus.Fields structure for logging.
+//  4. Reads and unmarshal the response body from the buffer into a logrus.Fields structure for logging.
+//  5. Retrieves additional logging fields related to the client from the Gin context.
+//  6. Retrieves the logger entry from the Gin context.
+//  7. Logs the request and response details with various fields including request and response headers,
+//     body content, latency, and user information using the Logrus logger.
+//
+// Note: Errors during unmarshalling or retrieving fields are ignored and will not interrupt the logging process.
+func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
+	latency := time.Since(requestTime)
+
+	currentUser, _ := user.Current()
+
+	var request, response logrus.Fields
+
+	bodyBytes, _ := io.ReadAll(c.Request.Body)
+	_ = json.Unmarshal(bodyBytes, &request)
+
+	responseBody := buf.Bytes()
+	_ = json.Unmarshal(responseBody, &response)
+
+	clientLog, _ := c.Get(generalkey.ClientLog)
+	clientLogFields := clientLog.([]logrus.Fields)
+
+	log, _ := c.Get(generalkey.Logger)
+	entry := log.(*logrus.Entry)
+
+	entry.WithFields(logrus.Fields{
+		"requestAgent":       c.GetHeader("User-Agent"),
+		"requestBody":        request,
+		"requestBodyString":  string(bodyBytes),
+		"requestContentType": c.GetHeader("Content-Type"),
+		"requestHeader":      c.Request.Header,
+		"requestHostName":    c.Request.Host,
+		"requestId":          c.GetString(generalkey.RequestID),
+		"requestIp":          c.ClientIP(),
+		"requestMethod":      c.Request.Method,
+		"requestProtocol":    c.Request.Proto,
+		"requestTimestamp":   requestTime.Format(time.RFC3339Nano),
+		"requestUrl":         c.Request.RequestURI,
+		"responseBody":       response,
+		"responseBodyString": string(responseBody),
+		"responseHeader":     c.Writer.Header(),
+		"responseLatency":    latency.String(),
+		"responseStatus":     c.Writer.Status(),
+		"responseTimestamp":  requestTime.Add(latency).Format(time.RFC3339Nano),
+		"responseUser":       currentUser.Username,
+		"target":             clientLogFields,
+	}).Info()
+}
+
+// LogGinClient logs the details of an HTTP request and response using Gin and Logrus.
+//
+// This function captures information about an HTTP request and its corresponding response,
+// including headers, bodies, status, and timing, and stores this information in the Gin
+// context under a specific key for further use (e.g., logging or debugging purposes).
+//
+// Parameters:
+//   - c *gin.Context: The Gin context that holds the request and response details.
+//   - requestURL string: The URL of the request being logged.
+//   - requestMethod string: The HTTP method used in the request (e.g., GET, POST).
+//   - requestContentType string: The content type of the request (e.g., application/json).
+//   - requestHeader map[string]interface{}: A map containing the headers of the request.
+//   - requestBody []byte: The body of the request as a byte slice.
+//   - responseHeader map[string]interface{}: A map containing the headers of the response.
+//   - responseBody []byte: The body of the response as a byte slice.
+//   - responseStatus int: The HTTP status code of the response.
+//   - requestTime time.Time: The timestamp of when the request was initiated.
+//   - responseLatency time.Duration: The duration it took to receive the response.
+//
+// Behavior:
+//   - The function unmarshal the request and response bodies into Logrus fields, if possible.
+//   - It compiles the request and response details into a log data structure with various fields
+//     like request body, headers, status, and timing details.
+//   - The log data is then stored in the Gin context using the key defined in `generalkey.ClientLog`.
+//   - If the `generalkey.ClientLog` key does not already exist in the context, it initializes a
+//     new slice of Logrus fields before appending the current log data.
+//
+// Example:
+//
+//	LogGinClient(c, "https://example.com/api", "POST", "application/json",
+//	    map[string]interface{}{"Authorization": "Bearer token"}, []byte(`{"name":"John"}`),
+//	    map[string]interface{}{"Content-Type": "application/json"}, []byte(`{"status":"success"}`),
+//	    200, time.Now(), time.Millisecond*250)
+func LogGinClient(
+	c *gin.Context,
+	requestURL string,
+	requestMethod string,
+	requestContentType string,
+	requestHeader map[string]interface{},
+	requestBody []byte,
+	responseHeader map[string]interface{},
+	responseBody []byte,
+	responseStatus int,
+	requestTime time.Time,
+	responseLatency time.Duration,
+) {
+	var requestField, responseField logrus.Fields
+
+	// Unmarshal request and response bodies into logrus fields
+	_ = json.Unmarshal(requestBody, &requestField)
+	_ = json.Unmarshal(responseBody, &responseField)
+
+	// Prepare log data for the external request
+	logData := logrus.Fields{
+		"targetRequestBody":        requestField,
+		"targetRequestBodyString":  string(requestBody),
+		"targetRequestContentType": requestContentType,
+		"targetRequestHeader":      requestHeader,
+		"targetRequestMethod":      requestMethod,
+		"targetRequestTimestamp":   requestTime.Format(time.RFC3339Nano),
+		"targetRequestURL":         requestURL,
+		"targetResponseBody":       responseField,
+		"targetResponseBodyString": string(responseBody),
+		"targetResponseHeader":     responseHeader,
+		"targetResponseLatency":    responseLatency.String(),
+		"targetResponseStatus":     responseStatus,
+		"targetResponseTimestamp":  requestTime.Add(responseLatency).Format(time.RFC3339Nano),
+	}
+
+	clientLog, exists := c.Get(generalkey.ClientLog)
+
+	if !exists {
+		clientLog = []logrus.Fields{}
+	}
+
+	clientLog = append(clientLog.([]logrus.Fields), logData)
+
+	c.Set(generalkey.ClientLog, clientLog)
 }

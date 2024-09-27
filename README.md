@@ -12,8 +12,7 @@ go get github.com/christiandoxa/welog
 
 ## Configuration
 
-`Welog` uses a configuration struct to set up ElasticSearch connection parameters. The `Config` struct allows you to
-define the ElasticSearch URL, username, password, and index name:
+`Welog` uses a configuration struct to set up ElasticSearch connection parameters. The `Config` struct allows you to define the ElasticSearch URL, username, password, and index name:
 
 ```go
 type Config struct {
@@ -26,8 +25,7 @@ type Config struct {
 
 ### Setting Configuration with `SetConfig`
 
-The `SetConfig` function is used to set ElasticSearch connection parameters via environment variables. Ensure you call
-this function at the start of your application:
+The `SetConfig` function is used to set ElasticSearch connection parameters via environment variables. Ensure you call this function at the start of your application:
 
 ### Example Usage
 
@@ -35,17 +33,16 @@ Call `SetConfig` with your configuration details before initializing the middlew
 
 ```go
 config := welog.Config{
-ElasticIndex:    "your-index",
-ElasticURL:      "http://localhost:9200",
-ElasticUsername: "your-username",
-ElasticPassword: "your-password",
+    ElasticIndex:    "your-index",
+    ElasticURL:      "http://localhost:9200",
+    ElasticUsername: "your-username",
+    ElasticPassword: "your-password",
 }
 
 welog.SetConfig(config)
 ```
 
-By calling `SetConfig`, you ensure that the logging library is properly configured to connect to your ElasticSearch
-instance, allowing detailed request and response logging to function as expected.
+By calling `SetConfig`, you ensure that the logging library is properly configured to connect to your ElasticSearch instance, allowing detailed request and response logging to function as expected.
 
 ## Usage
 

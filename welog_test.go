@@ -15,11 +15,20 @@ import (
 	"time"
 )
 
+var (
+	welogConfig = Config{
+		ElasticIndex:    "welog",
+		ElasticURL:      "http://127.0.0.1:9200",
+		ElasticUsername: "elastic",
+		ElasticPassword: "changeme",
+	}
+)
+
 // TestNewFiber tests the NewFiber middleware to ensure it sets up the Fiber application correctly.
 func TestNewFiber(t *testing.T) {
 	// Create a new Fiber app and apply the middleware.
 	app := fiber.New()
-	app.Use(NewFiber(fiber.Config{}))
+	app.Use(NewFiber(fiber.Config{}, welogConfig))
 
 	// Create a new HTTP GET request.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -97,7 +106,7 @@ func TestLogFiberClient(t *testing.T) {
 func TestNewGin(t *testing.T) {
 	// Create a new Gin router and apply the middleware.
 	r := gin.New()
-	r.Use(NewGin())
+	r.Use(NewGin(welogConfig))
 
 	// Define a simple GET endpoint.
 	r.GET("/", func(c *gin.Context) {

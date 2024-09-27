@@ -2,24 +2,25 @@ package welog
 
 import (
 	"bytes"
+	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 	"io"
+	"os"
 	"os/user"
 	"time"
 )
 
-// Initialize the package by loading environment variables from a .env file.
-func init() {
-	if err := godotenv.Load(); err != nil {
-		logrus.Fatal("Error loading .env file")
-	}
+type Config struct {
+	ElasticIndex    string
+	ElasticURL      string
+	ElasticUsername string
+	ElasticPassword string
 }
 
 // responseBodyWriter is a custom response writer that captures the response body.
@@ -35,7 +36,8 @@ func (w responseBodyWriter) Write(b []byte) (int, error) {
 }
 
 // NewFiber creates a new Fiber middleware that logs requests and responses.
-func NewFiber(config fiber.Config) fiber.Handler {
+func NewFiber(fiberConfig fiber.Config, welogConfig Config) fiber.Handler {
+	loadConfig(welogConfig)
 	return func(c *fiber.Ctx) error {
 		// Generate or retrieve the request ID.
 		requestID := c.Get("X-Request-ID")
@@ -53,8 +55,8 @@ func NewFiber(config fiber.Config) fiber.Handler {
 		// Proceed to the next middleware and handle any errors.
 		if err := c.Next(); err != nil {
 			errorHandler := fiber.DefaultErrorHandler
-			if config.ErrorHandler != nil {
-				errorHandler = config.ErrorHandler
+			if fiberConfig.ErrorHandler != nil {
+				errorHandler = fiberConfig.ErrorHandler
 			}
 			if err = errorHandler(c, err); err != nil {
 				logFiber(c, reqTime)
@@ -67,6 +69,13 @@ func NewFiber(config fiber.Config) fiber.Handler {
 
 		return nil
 	}
+}
+
+func loadConfig(config Config) {
+	_ = os.Setenv(envkey.ElasticIndex, config.ElasticIndex)
+	_ = os.Setenv(envkey.ElasticURL, config.ElasticURL)
+	_ = os.Setenv(envkey.ElasticUsername, config.ElasticUsername)
+	_ = os.Setenv(envkey.ElasticPd, config.ElasticPassword)
 }
 
 // logFiber logs the details of the Fiber request and response.
@@ -151,7 +160,8 @@ func LogFiberClient(
 }
 
 // NewGin creates a new Gin middleware that logs requests and responses.
-func NewGin() gin.HandlerFunc {
+func NewGin(welogConfig Config) gin.HandlerFunc {
+	loadConfig(welogConfig)
 	return func(c *gin.Context) {
 		// Generate or retrieve the request ID.
 		requestID := c.GetHeader("X-Request-ID")

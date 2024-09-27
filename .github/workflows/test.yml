@@ -1,4 +1,4 @@
-name: Go CI/CD Pipeline
+name: Go Test
 
 on:
   push:
@@ -24,9 +24,6 @@ jobs:
 
       - name: Install dependencies
         run: go mod download
-
-      - name: Copy .env.example to .env
-        run: cp .env.example .env
 
       - name: Cache Go modules
         uses: actions/cache@v3

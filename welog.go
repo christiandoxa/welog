@@ -36,9 +36,15 @@ func (w responseBodyWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+func SetConfig(config Config) {
+	_ = os.Setenv(envkey.ElasticIndex, config.ElasticIndex)
+	_ = os.Setenv(envkey.ElasticURL, config.ElasticURL)
+	_ = os.Setenv(envkey.ElasticUsername, config.ElasticUsername)
+	_ = os.Setenv(envkey.ElasticPd, config.ElasticPassword)
+}
+
 // NewFiber creates a new Fiber middleware that logs requests and responses.
-func NewFiber(fiberConfig fiber.Config, welogConfig Config) fiber.Handler {
-	loadConfig(welogConfig)
+func NewFiber(fiberConfig fiber.Config) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// Generate or retrieve the request ID.
 		requestID := c.Get("X-Request-ID")
@@ -70,13 +76,6 @@ func NewFiber(fiberConfig fiber.Config, welogConfig Config) fiber.Handler {
 
 		return nil
 	}
-}
-
-func loadConfig(config Config) {
-	_ = os.Setenv(envkey.ElasticIndex, config.ElasticIndex)
-	_ = os.Setenv(envkey.ElasticURL, config.ElasticURL)
-	_ = os.Setenv(envkey.ElasticUsername, config.ElasticUsername)
-	_ = os.Setenv(envkey.ElasticPd, config.ElasticPassword)
 }
 
 // logFiber logs the details of the Fiber request and response.
@@ -161,8 +160,7 @@ func LogFiberClient(
 }
 
 // NewGin creates a new Gin middleware that logs requests and responses.
-func NewGin(welogConfig Config) gin.HandlerFunc {
-	loadConfig(welogConfig)
+func NewGin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Generate or retrieve the request ID.
 		requestID := c.GetHeader("X-Request-ID")

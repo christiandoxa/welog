@@ -2,6 +2,7 @@ package welog
 
 import (
 	"bytes"
+	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
 	"github.com/gin-gonic/gin"
@@ -11,6 +12,7 @@ import (
 	"github.com/valyala/fasthttp"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
@@ -24,11 +26,33 @@ var (
 	}
 )
 
+// TestSetConfig tests the SetConfig function
+func TestSetConfig(t *testing.T) {
+	// Call the SetConfig function
+	SetConfig(welogConfig)
+
+	// Assert that environment variables are set correctly
+	elasticIndex := os.Getenv(envkey.ElasticIndex)
+	assert.Equal(t, welogConfig.ElasticIndex, elasticIndex, "ElasticIndex should be set correctly")
+
+	elasticURL := os.Getenv(envkey.ElasticURL)
+	assert.Equal(t, welogConfig.ElasticURL, elasticURL, "ElasticURL should be set correctly")
+
+	elasticUsername := os.Getenv(envkey.ElasticUsername)
+	assert.Equal(t, welogConfig.ElasticUsername, elasticUsername, "ElasticUsername should be set correctly")
+
+	elasticPassword := os.Getenv(envkey.ElasticPd)
+	assert.Equal(t, welogConfig.ElasticPassword, elasticPassword, "ElasticPassword should be set correctly")
+}
+
 // TestNewFiber tests the NewFiber middleware to ensure it sets up the Fiber application correctly.
 func TestNewFiber(t *testing.T) {
+	// Call the SetConfig function
+	SetConfig(welogConfig)
+
 	// Create a new Fiber app and apply the middleware.
 	app := fiber.New()
-	app.Use(NewFiber(fiber.Config{}, welogConfig))
+	app.Use(NewFiber(fiber.Config{}))
 
 	// Create a new HTTP GET request.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -44,6 +68,9 @@ func TestNewFiber(t *testing.T) {
 
 // TestLogFiber tests the logFiber function within the Fiber middleware.
 func TestLogFiber(t *testing.T) {
+	// Call the SetConfig function
+	SetConfig(welogConfig)
+
 	// Create a new Fiber app.
 	app := fiber.New()
 
@@ -70,6 +97,9 @@ func TestLogFiber(t *testing.T) {
 
 // TestLogFiberClient tests the LogFiberClient function to ensure it logs client requests and responses correctly.
 func TestLogFiberClient(t *testing.T) {
+	// Call the SetConfig function
+	SetConfig(welogConfig)
+
 	// Create a new Fiber app.
 	app := fiber.New()
 
@@ -104,9 +134,12 @@ func TestLogFiberClient(t *testing.T) {
 
 // TestNewGin tests the NewGin middleware to ensure it sets up the Gin application correctly.
 func TestNewGin(t *testing.T) {
+	// Call the SetConfig function
+	SetConfig(welogConfig)
+
 	// Create a new Gin router and apply the middleware.
 	r := gin.New()
-	r.Use(NewGin(welogConfig))
+	r.Use(NewGin())
 
 	// Define a simple GET endpoint.
 	r.GET("/", func(c *gin.Context) {
@@ -128,6 +161,9 @@ func TestNewGin(t *testing.T) {
 
 // TestLogGin tests the logGin function within the Gin middleware.
 func TestLogGin(t *testing.T) {
+	// Call the SetConfig function
+	SetConfig(welogConfig)
+
 	// Create a buffer and logger to capture log output.
 	buf := &bytes.Buffer{}
 	log := logrus.New()
@@ -162,6 +198,9 @@ func TestLogGin(t *testing.T) {
 
 // TestLogGinClient tests the LogGinClient function to ensure it logs client requests and responses correctly.
 func TestLogGinClient(t *testing.T) {
+	// Call the SetConfig function
+	SetConfig(welogConfig)
+
 	// Create a POST request with a JSON body.
 	req, _ := http.NewRequest(http.MethodPost, "/", bytes.NewBuffer([]byte(`{"key": "value"}`)))
 	req.Header.Set("Content-Type", "application/json")

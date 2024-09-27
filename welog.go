@@ -5,6 +5,7 @@ import (
 	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
+	"github.com/christiandoxa/welog/pkg/util"
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
@@ -97,26 +98,26 @@ func logFiber(c *fiber.Ctx, requestTime time.Time) {
 
 	// Log various details of the request and response.
 	c.Locals(generalkey.Logger).(*logrus.Entry).WithFields(logrus.Fields{
-		"requestAgent":         c.Get("User-Agent"),
-		"requestBody":          request,
-		"requestBodyString":    string(c.Body()),
-		"requestContentType":   c.Get("Content-Type"),
-		"requestHeader":        c.GetReqHeaders(),
-		"requestHostName":      c.Hostname(),
-		"requestId":            c.Locals(generalkey.RequestID),
-		"requestIp":            c.IP(),
-		"requestMethod":        c.Method(),
-		"requestProtocol":      c.Protocol(),
-		"requestTimestamp":     requestTime.Format(time.RFC3339Nano),
-		"requestUrl":           c.BaseURL() + c.OriginalURL(),
-		"responseBody":         response,
-		"responseBodyString":   string(c.Response().Body()),
-		"responseHeaderString": c.Response().Header.String(),
-		"responseLatency":      latency.String(),
-		"responseStatus":       c.Response().StatusCode(),
-		"responseTimestamp":    requestTime.Add(latency).Format(time.RFC3339Nano),
-		"responseUser":         currentUser.Username,
-		"target":               clientLog,
+		"requestAgent":       c.Get("User-Agent"),
+		"requestBody":        request,
+		"requestBodyString":  string(c.Body()),
+		"requestContentType": c.Get("Content-Type"),
+		"requestHeader":      c.GetReqHeaders(),
+		"requestHostName":    c.Hostname(),
+		"requestId":          c.Locals(generalkey.RequestID),
+		"requestIp":          c.IP(),
+		"requestMethod":      c.Method(),
+		"requestProtocol":    c.Protocol(),
+		"requestTimestamp":   requestTime.Format(time.RFC3339Nano),
+		"requestUrl":         c.BaseURL() + c.OriginalURL(),
+		"responseBody":       response,
+		"responseBodyString": string(c.Response().Body()),
+		"responseHeader":     util.HeaderToMap(&c.Response().Header),
+		"responseLatency":    latency.String(),
+		"responseStatus":     c.Response().StatusCode(),
+		"responseTimestamp":  requestTime.Add(latency).Format(time.RFC3339Nano),
+		"responseUser":       currentUser.Username,
+		"target":             clientLog,
 	}).Info()
 }
 

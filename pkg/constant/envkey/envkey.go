@@ -8,9 +8,9 @@ package envkey
 // This index is used to store logs and other structured data within the ElasticSearch cluster.
 const ElasticIndex = "ELASTIC_INDEX__"
 
-// ElasticPd is the environment variable key used to specify the password for authenticating
+// ElasticPassword is the environment variable key used to specify the password for authenticating
 // with ElasticSearch. This password, together with the username, secures the connection to ElasticSearch.
-const ElasticPd = "ELASTIC_PASSWORD__"
+const ElasticPassword = "ELASTIC_PASSWORD__"
 
 // ElasticURL is the environment variable key used to specify the URL of the ElasticSearch instance.
 // This URL is required to connect the application to the ElasticSearch service for logging and data storage.

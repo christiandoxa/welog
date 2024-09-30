@@ -41,7 +41,7 @@ func TestSetConfig(t *testing.T) {
 	elasticUsername := os.Getenv(envkey.ElasticUsername)
 	assert.Equal(t, welogConfig.ElasticUsername, elasticUsername, "ElasticUsername should be set correctly")
 
-	elasticPassword := os.Getenv(envkey.ElasticPd)
+	elasticPassword := os.Getenv(envkey.ElasticPassword)
 	assert.Equal(t, welogConfig.ElasticPassword, elasticPassword, "ElasticPassword should be set correctly")
 }
 
@@ -59,7 +59,7 @@ func TestNewFiber(t *testing.T) {
 	req.Header.Set("User-Agent", "Test-Agent")
 
 	// Perform the request and capture the response.
-	resp, err := app.Test(req) //nolint:bodyclose
+	resp, err := app.Test(req, 5000) //nolint:bodyclose
 
 	// Assert that there are no errors and the status is 404 Not Found.
 	assert.NoError(t, err)

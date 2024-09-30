@@ -61,7 +61,7 @@ func logger() *logrus.Logger {
 	c, err := elasticsearch.NewClient(elasticsearch.Config{
 		Addresses: []string{elasticURL},
 		Username:  os.Getenv(envkey.ElasticUsername),
-		Password:  os.Getenv(envkey.ElasticPd),
+		Password:  os.Getenv(envkey.ElasticPassword),
 	})
 
 	if err != nil {

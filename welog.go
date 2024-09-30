@@ -40,7 +40,7 @@ func SetConfig(config Config) {
 	_ = os.Setenv(envkey.ElasticIndex, config.ElasticIndex)
 	_ = os.Setenv(envkey.ElasticURL, config.ElasticURL)
 	_ = os.Setenv(envkey.ElasticUsername, config.ElasticUsername)
-	_ = os.Setenv(envkey.ElasticPd, config.ElasticPassword)
+	_ = os.Setenv(envkey.ElasticPassword, config.ElasticPassword)
 }
 
 // NewFiber creates a new Fiber middleware that logs requests and responses.
@@ -51,6 +51,9 @@ func NewFiber(fiberConfig fiber.Config) fiber.Handler {
 		if requestID == "" {
 			requestID = uuid.NewString()
 		}
+
+		// Set the request ID to the context.
+		c.Set("X-Request-ID", requestID)
 
 		// Set request-related values to the context.
 		c.Locals(generalkey.RequestID, requestID)
@@ -167,6 +170,9 @@ func NewGin() gin.HandlerFunc {
 		if requestID == "" {
 			requestID = uuid.NewString()
 		}
+
+		// Set the request ID in the context.
+		c.Header("X-Request-ID", requestID)
 
 		// Set request-related values to the context.
 		c.Set(generalkey.RequestID, requestID)

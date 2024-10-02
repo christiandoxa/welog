@@ -41,9 +41,9 @@ func ecsLogMessageModifierFunc(formatter *ecslogrus.Formatter) func(*logrus.Entr
 }
 
 // indexNameFunc generates the index name for ElasticSearch by concatenating the
-// environment-specific index prefix and the current month and year in YYYY-MM format.
+// environment-specific index prefix and the current date in YYYY-MM-DD format.
 func indexNameFunc() string {
-	return fmt.Sprint(os.Getenv(envkey.ElasticIndex), "-", time.Now().Format("2006-01"))
+	return fmt.Sprint(os.Getenv(envkey.ElasticIndex), "-", time.Now().Format("2006-01-02"))
 }
 
 // logger initializes and configures a new instance of the logrus.Logger. It sets up

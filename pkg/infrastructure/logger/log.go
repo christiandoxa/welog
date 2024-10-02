@@ -103,9 +103,10 @@ func logger() *logrus.Logger {
 	return log
 }
 
-// monitorConnection periodically checks the connection to ElasticSearch and reinitializes
-// the logger if the connection is lost. This ensures that logging continues even after
-// connectivity issues.
+// monitorConnection starts a goroutine that periodically checks the connection to ElasticSearch.
+// If the connection is lost, it re-initializes the ElasticSearch client and hooks.
+// This ensures that even if the ElasticSearch instance is restarted, the application
+// will continue to log to ElasticSearch once the connection is re-established.
 func monitorConnection() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -117,15 +118,71 @@ func monitorConnection() {
 			if client != nil {
 				_, err := client.Ping()
 				if err != nil {
-					// Re-initialize the logger
-					instance = logger()
+					// Re-initialize the client and hooks
+					reinitializeLogger(instance)
 				}
 			} else {
-				instance = logger()
+				reinitializeLogger(instance)
 			}
 			mutex.Unlock()
 		}
 	}
+}
+
+// reinitializeLogger reinitialize the ElasticSearch client and logger if the connection
+// to ElasticSearch is lost. This function is used by the connection monitoring goroutine.
+// It pings the ElasticSearch server and reinitialize the logger if the connection is
+// successful.
+func reinitializeLogger(log *logrus.Logger) {
+	elasticURL := os.Getenv(envkey.ElasticURL)
+	if elasticURL == "" {
+		log.Error("ElasticURL is not set")
+		return
+	}
+
+	c, err := elasticsearch.NewClient(elasticsearch.Config{
+		Addresses: []string{elasticURL},
+		Username:  os.Getenv(envkey.ElasticUsername),
+		Password:  os.Getenv(envkey.ElasticPassword),
+	})
+
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	res, err := c.Ping()
+	if err != nil {
+		log.Error(err)
+		return
+	}
+	if res != nil {
+		_ = res.Body.Close()
+	}
+
+	client = c
+
+	// Remove all existing hooks
+	log.ReplaceHooks(make(logrus.LevelHooks))
+
+	// Parse URL
+	parsedURL, err := url.Parse(elasticURL)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	// Parse hostname
+	host := parsedURL.Hostname()
+
+	hook, err := elogrus.NewElasticHookWithFunc(client, host, logrus.TraceLevel, indexNameFunc)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ecslogrus.Formatter{})
+	log.Hooks.Add(hook)
 }
 
 // Logger returns the singleton instance of the logrus.Logger. It initializes the logger

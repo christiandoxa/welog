@@ -1,6 +1,6 @@
 module github.com/christiandoxa/welog
 
-go 1.23.1
+go 1.23.2
 
 require (
 	github.com/elastic/go-elasticsearch/v8 v8.15.0

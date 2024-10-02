@@ -55,7 +55,7 @@ func logger() *logrus.Logger {
 
 	elasticURL := os.Getenv(envkey.ElasticURL)
 	if elasticURL == "" {
-		log.Fatal("ElasticURL is not set")
+		log.Error("ElasticURL is not set")
 	}
 
 	c, err := elasticsearch.NewClient(elasticsearch.Config{
@@ -65,12 +65,12 @@ func logger() *logrus.Logger {
 	})
 
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
 	}
 
 	res, err := c.Ping()
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
 	}
 	if res != nil {
 		_ = res.Body.Close()
@@ -81,7 +81,7 @@ func logger() *logrus.Logger {
 	// Parse URL
 	parsedURL, err := url.Parse(elasticURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
 	}
 
 	// Parse hostname
@@ -89,7 +89,7 @@ func logger() *logrus.Logger {
 
 	hook, err := elogrus.NewElasticHookWithFunc(client, host, logrus.TraceLevel, indexNameFunc)
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
 	}
 
 	hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ecslogrus.Formatter{})

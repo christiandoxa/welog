@@ -76,7 +76,11 @@ func logger() *logrus.Logger {
 		return log
 	}
 	if res != nil {
-		_ = res.Body.Close()
+		err = res.Body.Close()
+		if err != nil {
+			log.Error(err)
+			return log
+		}
 	}
 
 	client = c
@@ -157,7 +161,11 @@ func reinitializeLogger(log *logrus.Logger) {
 		return
 	}
 	if res != nil {
-		_ = res.Body.Close()
+		err = res.Body.Close()
+		if err != nil {
+			log.Error(err)
+			return
+		}
 	}
 
 	client = c

@@ -37,10 +37,18 @@ func (w responseBodyWriter) Write(b []byte) (int, error) {
 }
 
 func SetConfig(config Config) {
-	_ = os.Setenv(envkey.ElasticIndex, config.ElasticIndex)
-	_ = os.Setenv(envkey.ElasticURL, config.ElasticURL)
-	_ = os.Setenv(envkey.ElasticUsername, config.ElasticUsername)
-	_ = os.Setenv(envkey.ElasticPassword, config.ElasticPassword)
+	if err := os.Setenv(envkey.ElasticIndex, config.ElasticIndex); err != nil {
+		logger.Logger().Error(err)
+	}
+	if err := os.Setenv(envkey.ElasticURL, config.ElasticURL); err != nil {
+		logger.Logger().Error(err)
+	}
+	if err := os.Setenv(envkey.ElasticUsername, config.ElasticUsername); err != nil {
+		logger.Logger().Error(err)
+	}
+	if err := os.Setenv(envkey.ElasticPassword, config.ElasticPassword); err != nil {
+		logger.Logger().Error(err)
+	}
 }
 
 // NewFiber creates a new Fiber middleware that logs requests and responses.
@@ -93,8 +101,12 @@ func logFiber(c *fiber.Ctx, requestTime time.Time) {
 	}
 
 	var request, response logrus.Fields
-	_ = json.Unmarshal(c.Body(), &request)
-	_ = json.Unmarshal(c.Response().Body(), &response)
+	if err = json.Unmarshal(c.Body(), &request); err != nil {
+		logger.Logger().Error(err)
+	}
+	if err = json.Unmarshal(c.Response().Body(), &response); err != nil {
+		logger.Logger().Error(err)
+	}
 
 	clientLog := c.Locals(generalkey.ClientLog).([]logrus.Fields)
 
@@ -139,8 +151,12 @@ func LogFiberClient(
 ) {
 	var requestField, responseField logrus.Fields
 
-	_ = json.Unmarshal(requestBody, &requestField)
-	_ = json.Unmarshal(responseBody, &responseField)
+	if err := json.Unmarshal(requestBody, &requestField); err != nil {
+		logger.Logger().Error(err)
+	}
+	if err := json.Unmarshal(responseBody, &responseField); err != nil {
+		logger.Logger().Error(err)
+	}
 
 	logData := logrus.Fields{
 		"targetRequestBody":        requestField,
@@ -198,15 +214,25 @@ func NewGin() gin.HandlerFunc {
 func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
 	latency := time.Since(requestTime)
 
-	currentUser, _ := user.Current()
+	currentUser, err := user.Current()
+	if err != nil {
+		logger.Logger().Error(err)
+	}
 
 	var request, response logrus.Fields
-	bodyBytes, _ := io.ReadAll(c.Request.Body)
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		logger.Logger().Error(err)
+	}
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	_ = json.Unmarshal(bodyBytes, &request)
+	if err = json.Unmarshal(bodyBytes, &request); err != nil {
+		logger.Logger().Error(err)
+	}
 
 	responseBody := buf.Bytes()
-	_ = json.Unmarshal(responseBody, &response)
+	if err = json.Unmarshal(responseBody, &response); err != nil {
+		logger.Logger().Error(err)
+	}
 
 	clientLog, _ := c.Get(generalkey.ClientLog)
 	clientLogFields := clientLog.([]logrus.Fields)
@@ -255,8 +281,12 @@ func LogGinClient(
 ) {
 	var requestField, responseField logrus.Fields
 
-	_ = json.Unmarshal(requestBody, &requestField)
-	_ = json.Unmarshal(responseBody, &responseField)
+	if err := json.Unmarshal(requestBody, &requestField); err != nil {
+		logger.Logger().Error(err)
+	}
+	if err := json.Unmarshal(responseBody, &responseField); err != nil {
+		logger.Logger().Error(err)
+	}
 
 	logData := logrus.Fields{
 		"targetRequestBody":        requestField,

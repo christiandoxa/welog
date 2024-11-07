@@ -332,6 +332,7 @@ func LogTarget(c *gin.Context, target Target) {
 
 	var response, errorLog logrus.Fields
 
+	// Unmarshal the response body
 	if err := json.Unmarshal(target.ResponseBody, &response); err != nil {
 		entry.WithError(err).Error("logger_self_log")
 		response = map[string]interface{}{
@@ -339,6 +340,7 @@ func LogTarget(c *gin.Context, target Target) {
 		}
 	}
 
+	// Get error log from target
 	errContext, ok := c.Get(generalkey.ErrorLog)
 	if ok {
 		errStack := errors.WithStack(errContext.(error))

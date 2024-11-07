@@ -2,6 +2,7 @@ package welog
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
@@ -10,6 +11,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"io"
 	"os"
@@ -24,10 +26,25 @@ type Config struct {
 	ElasticPassword string
 }
 
+type Target struct {
+	TargetUrl      string        `json:"target_url"`
+	ElapsedTime    time.Duration `json:"target_elapsed_time"`
+	Method         string        `json:"target_method"`
+	RequestHeader  any           `json:"target_request_header"`
+	RequestBody    any           `json:"target_request_body"`
+	ResponseHeader any           `json:"target_response_header"`
+	ResponseBody   []byte        `json:"target_response_body"`
+	StatusCode     int           `json:"target_status_code"`
+}
+
 // responseBodyWriter is a custom response writer that captures the response body.
 type responseBodyWriter struct {
 	gin.ResponseWriter
 	body *bytes.Buffer
+}
+
+type stackTracer interface {
+	StackTrace() errors.StackTrace
 }
 
 // Write writes the response body to both the underlying ResponseWriter and the buffer.
@@ -213,56 +230,52 @@ func NewGin() gin.HandlerFunc {
 // logGin logs the details of the Gin request and response.
 func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
 	latency := time.Since(requestTime)
+	log, _ := c.Get(generalkey.Logger)
+	entry := log.(*logrus.Entry)
 
-	currentUser, err := user.Current()
-	if err != nil {
-		logger.Logger().Error(err)
-	}
-
-	var request, response logrus.Fields
+	var request, response, errorLog logrus.Fields
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		logger.Logger().Error(err)
+		entry.WithError(err).Error("logger_self_log")
+		request = nil
 	}
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	if err = json.Unmarshal(bodyBytes, &request); err != nil {
-		logger.Logger().Error(err)
+		entry.WithError(err).Error("logger_self_log")
+		request = nil
 	}
 
 	responseBody := buf.Bytes()
 	if err = json.Unmarshal(responseBody, &response); err != nil {
-		logger.Logger().Error(err)
+		entry.WithError(err).Error("logger_self_log")
+		response = nil
 	}
 
-	clientLog, _ := c.Get(generalkey.ClientLog)
-	clientLogFields := clientLog.([]logrus.Fields)
+	errContext, ok := c.Get(generalkey.ErrorLog)
+	if ok {
+		errStack := errors.WithStack(errContext.(error))
+		st := errStack.(stackTracer).StackTrace()
+		errorLog = logrus.Fields{
+			"is_error":      true,
+			"error_message": fmt.Sprintf("%+v", errStack.Error()),
+			"error_cause":   fmt.Sprintf("%+v", st[5:6]),
+		}
+	}
 
-	log, _ := c.Get(generalkey.Logger)
-	entry := log.(*logrus.Entry)
-
-	// Log various details of the request and response.
+	// Log for client request and response
 	entry.WithFields(logrus.Fields{
-		"requestAgent":       c.GetHeader("User-Agent"),
-		"requestBody":        request,
-		"requestBodyString":  string(bodyBytes),
-		"requestContentType": c.GetHeader("Content-Type"),
-		"requestHeader":      c.Request.Header,
-		"requestHostName":    c.Request.Host,
-		"requestId":          c.GetString(generalkey.RequestID),
-		"requestIp":          c.ClientIP(),
-		"requestMethod":      c.Request.Method,
-		"requestProtocol":    c.Request.Proto,
-		"requestTimestamp":   requestTime.Format(time.RFC3339Nano),
-		"requestUrl":         c.Request.RequestURI,
-		"responseBody":       response,
-		"responseBodyString": string(responseBody),
-		"responseHeader":     c.Writer.Header(),
-		"responseLatency":    latency.String(),
-		"responseStatus":     c.Writer.Status(),
-		"responseTimestamp":  requestTime.Add(latency).Format(time.RFC3339Nano),
-		"responseUser":       currentUser.Username,
-		"target":             clientLogFields,
-	}).Info()
+		"client_ip":        c.ClientIP(),
+		"real_time_system": time.Now().In(time.UTC).Format("2006-01-02T15:04:05.000"),
+		"elapsed_time":     latency.Milliseconds(),
+		"req_header":       c.Request.Header,
+		"req_body":         request,
+		"req_verb":         c.Request.Method,
+		"req_url":          fmt.Sprintf("%s%s", c.Request.Host, c.Request.URL.String()),
+		"res_header":       c.Writer.Header(),
+		"res_body":         response,
+		"status_code":      c.Writer.Status(),
+		"error_log":        errorLog,
+	}).Info("client_log")
 }
 
 // LogGinClient logs a custom client request and response for Gin.
@@ -311,4 +324,44 @@ func LogGinClient(
 
 	clientLog = append(clientLog.([]logrus.Fields), logData)
 	c.Set(generalkey.ClientLog, clientLog)
+}
+
+func LogTarget(c *gin.Context, target Target) {
+	log, _ := c.Get(generalkey.Logger)
+	entry := log.(*logrus.Entry)
+
+	var response, errorLog logrus.Fields
+
+	// Unmarshal the response body
+	if err := json.Unmarshal(target.ResponseBody, &response); err != nil {
+		entry.WithError(err).Error("logger_self_log")
+		response = map[string]interface{}{
+			"error_html": string(target.ResponseBody),
+		}
+	}
+
+	// Get error log from target
+	errContext, ok := c.Get(generalkey.ErrorLog)
+	if ok {
+		errStack := errors.WithStack(errContext.(error))
+		st := errStack.(stackTracer).StackTrace()
+		errorLog = logrus.Fields{
+			"is_error":      true,
+			"error_message": fmt.Sprintf("%+v", errStack.Error()),
+			"error_cause":   fmt.Sprintf("%+v", st[5:6]),
+		}
+	}
+
+	// Log for target request and response
+	entry.WithFields(logrus.Fields{
+		"elapsed_time": target.ElapsedTime.Milliseconds(),
+		"req_header":   target.RequestHeader,
+		"req_body":     target.RequestBody,
+		"req_verb":     target.Method,
+		"req_url":      target.TargetUrl,
+		"res_header":   target.ResponseHeader,
+		"res_body":     response,
+		"status_code":  target.StatusCode,
+		"error_log":    errorLog,
+	}).Info("target_log")
 }

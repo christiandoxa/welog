@@ -25,8 +25,8 @@ var (
 	welogConfig = Config{
 		ElasticIndex:    "welog",
 		ElasticURL:      "http://localhost:9200",
-		ElasticUsername: "",
-		ElasticPassword: "",
+		ElasticUsername: "elastic",
+		ElasticPassword: "changeme",
 	}
 )
 
@@ -147,7 +147,11 @@ func TestNewGin(t *testing.T) {
 
 	// Define a simple GET endpoint.
 	r.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"message": "ok"})
+		var respBody []map[string]any
+		respBody = append(respBody, map[string]any{
+			"test": "ok",
+		})
+		c.JSON(http.StatusOK, respBody)
 	})
 
 	// Create a GET request with a custom Request ID.

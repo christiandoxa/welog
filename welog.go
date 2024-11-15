@@ -233,7 +233,9 @@ func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
 	log, _ := c.Get(generalkey.Logger)
 	entry := log.(*logrus.Entry)
 
-	var request, response, errorLog logrus.Fields
+	var request, errorLog logrus.Fields
+	var respArray = []map[string]any{}
+	response := make(map[string]any, 0)
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		entry.WithError(err).Error("logger_self_log")
@@ -246,9 +248,16 @@ func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
 	}
 
 	responseBody := buf.Bytes()
-	if err = json.Unmarshal(responseBody, &response); err != nil {
+
+	if err := json.Unmarshal(responseBody, &response); err != nil {
 		entry.WithError(err).Error("logger_self_log")
-		response = nil
+		if e := json.Unmarshal(responseBody, &respArray); e != nil {
+			entry.WithError(e).Error("logger_self_log")
+			//response = nil
+		} else {
+			response["data_array"] = respArray
+		}
+
 	}
 
 	errContext, ok := c.Get(generalkey.ErrorLog)

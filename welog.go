@@ -204,6 +204,11 @@ func NewGin() gin.HandlerFunc {
 			requestID = uuid.NewString()
 		}
 
+		bodyBytes, _ := io.ReadAll(c.Request.Body)
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		//_ = json.Unmarshal(bodyBytes, &request)
+		c.Set(generalkey.RequestBody, bodyBytes)
+
 		// Set the request ID in the context.
 		c.Header("X-Request-ID", requestID)
 
@@ -236,13 +241,13 @@ func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
 	var request, errorLog logrus.Fields
 	var respArray = []map[string]any{}
 	response := make(map[string]any, 0)
-	bodyBytes, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		entry.WithError(err).Error("logger_self_log")
-		request = nil
+
+	requestBody, isExist := c.Get(generalkey.RequestBody)
+	if !isExist {
+		requestBody = ""
 	}
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	if err = json.Unmarshal(bodyBytes, &request); err != nil {
+	err := json.Unmarshal(requestBody.([]byte), &request)
+	if err != nil {
 		entry.WithError(err).Error("logger_self_log")
 		request = nil
 	}

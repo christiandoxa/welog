@@ -18,3 +18,5 @@ const RequestID = "id"
 // ErrorLog is the context key used to store the error log entries related to server errors.
 // This key helps in accumulating log data for incoming HTTP requests that the server receives.
 const ErrorLog = "error-log"
+
+const RequestBody = "request-body"

@@ -23,10 +23,11 @@ import (
 
 var (
 	welogConfig = Config{
-		ElasticIndex:    "welog",
+		ElasticIndex:    "welog2",
 		ElasticURL:      "http://localhost:9200",
 		ElasticUsername: "elastic",
 		ElasticPassword: "changeme",
+		ResBodyType:     "string",
 	}
 )
 
@@ -145,17 +146,23 @@ func TestNewGin(t *testing.T) {
 	r := gin.New()
 	r.Use(NewGin())
 
+	type BodyReq struct {
+		Key string `json:"key"`
+	}
+
 	// Define a simple GET endpoint.
 	r.GET("/", func(c *gin.Context) {
-		var respBody []map[string]any
-		respBody = append(respBody, map[string]any{
-			"test": "ok",
-		})
+		respBody := `{"key": "test"}`
+		//var respBody []map[string]any
+		var reqBody BodyReq
+		c.BindJSON(&reqBody)
+		respBody = respBody
 		c.JSON(http.StatusOK, respBody)
 	})
 
 	// Create a GET request with a custom Request ID.
-	req, _ := http.NewRequest(http.MethodGet, "/", bytes.NewBuffer([]byte(`{"key": "value"}`)))
+	req, _ := http.NewRequest(http.MethodGet, "/", bytes.NewBuffer([]byte(`{"key": "test"}`)))
+
 	w := httptest.NewRecorder()
 
 	// Serve the request and capture the response.
@@ -183,7 +190,7 @@ func TestNewGinWithError(t *testing.T) {
 	})
 
 	// Create a GET request with a custom Request ID.
-	req, _ := http.NewRequest(http.MethodGet, "/", bytes.NewBuffer([]byte(`{"key": "value"}`)))
+	req, _ := http.NewRequest(http.MethodGet, "/", bytes.NewBuffer([]byte(`asdfasdf`)))
 	w := httptest.NewRecorder()
 
 	// Serve the request and capture the response.

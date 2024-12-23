@@ -24,7 +24,10 @@ type Config struct {
 	ElasticURL      string
 	ElasticUsername string
 	ElasticPassword string
+	ResBodyType     string
 }
+
+var respBodyType string
 
 type Target struct {
 	TargetUrl      string        `json:"target_url"`
@@ -65,6 +68,11 @@ func SetConfig(config Config) {
 	}
 	if err := os.Setenv(envkey.ElasticPassword, config.ElasticPassword); err != nil {
 		logger.Logger().Error(err)
+	}
+	if config.ResBodyType != "" {
+		respBodyType = config.ResBodyType
+	} else {
+		respBodyType = envkey.JSON_TYPE
 	}
 }
 
@@ -204,6 +212,11 @@ func NewGin() gin.HandlerFunc {
 			requestID = uuid.NewString()
 		}
 
+		bodyBytes, _ := io.ReadAll(c.Request.Body)
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		//_ = json.Unmarshal(bodyBytes, &request)
+		c.Set(generalkey.RequestBody, bodyBytes)
+
 		// Set the request ID in the context.
 		c.Header("X-Request-ID", requestID)
 
@@ -236,29 +249,20 @@ func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
 	var request, errorLog logrus.Fields
 	var respArray = []map[string]any{}
 	response := make(map[string]any, 0)
-	bodyBytes, err := io.ReadAll(c.Request.Body)
+
+	requestBody, isExist := c.Get(generalkey.RequestBody)
+	if !isExist {
+		requestBody = ""
+	}
+	err := json.Unmarshal(requestBody.([]byte), &request)
 	if err != nil {
 		entry.WithError(err).Error("logger_self_log")
 		request = nil
 	}
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	if err = json.Unmarshal(bodyBytes, &request); err != nil {
-		entry.WithError(err).Error("logger_self_log")
-		request = nil
-	}
 
-	responseBody := buf.Bytes()
-
-	if err := json.Unmarshal(responseBody, &response); err != nil {
-		entry.WithError(err).Error("logger_self_log")
-		if e := json.Unmarshal(responseBody, &respArray); e != nil {
-			entry.WithError(e).Error("logger_self_log")
-			//response = nil
-		} else {
-			response["data_array"] = respArray
-		}
-
-	}
+	//if err := json.Unmarshal(responseBody, &response); err != nil {
+	//	entry.WithError(err).Error("logger_self_log")
+	//}
 
 	errContext, ok := c.Get(generalkey.ErrorLog)
 	if ok {
@@ -270,21 +274,45 @@ func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
 			"error_cause":   fmt.Sprintf("%+v", st[5:6]),
 		}
 	}
+	responseBody := buf.Bytes()
+	switch respBodyType {
+	case envkey.STRING_TYPE:
+		entry.WithFields(logrus.Fields{
+			"client_ip":        c.ClientIP(),
+			"real_time_system": time.Now().In(time.UTC).Format("2006-01-02T15:04:05.000"),
+			"elapsed_time":     latency.Milliseconds(),
+			"req_header":       c.Request.Header,
+			"req_body":         request,
+			"req_verb":         c.Request.Method,
+			"req_url":          fmt.Sprintf("%s%s", c.Request.Host, c.Request.URL.String()),
+			"res_header":       c.Writer.Header(),
+			"res_body":         buf.String(),
+			"status_code":      c.Writer.Status(),
+			"error_log":        errorLog,
+		}).Info("client_log")
+	default:
+		err := json.Unmarshal(responseBody, &respArray)
+		if err = json.Unmarshal(responseBody, &respArray); err != nil {
+			entry.WithError(err).Error("logger_self_log")
+			response["data_array"] = respArray
+		}
 
+		entry.WithFields(logrus.Fields{
+			"client_ip":        c.ClientIP(),
+			"real_time_system": time.Now().In(time.UTC).Format("2006-01-02T15:04:05.000"),
+			"elapsed_time":     latency.Milliseconds(),
+			"req_header":       c.Request.Header,
+			"req_body":         request,
+			"req_verb":         c.Request.Method,
+			"req_url":          fmt.Sprintf("%s%s", c.Request.Host, c.Request.URL.String()),
+			"res_header":       c.Writer.Header(),
+			"res_body":         response,
+			"status_code":      c.Writer.Status(),
+			"error_log":        errorLog,
+		}).Info("client_log")
+	}
 	// Log for client request and response
-	entry.WithFields(logrus.Fields{
-		"client_ip":        c.ClientIP(),
-		"real_time_system": time.Now().In(time.UTC).Format("2006-01-02T15:04:05.000"),
-		"elapsed_time":     latency.Milliseconds(),
-		"req_header":       c.Request.Header,
-		"req_body":         request,
-		"req_verb":         c.Request.Method,
-		"req_url":          fmt.Sprintf("%s%s", c.Request.Host, c.Request.URL.String()),
-		"res_header":       c.Writer.Header(),
-		"res_body":         response,
-		"status_code":      c.Writer.Status(),
-		"error_log":        errorLog,
-	}).Info("client_log")
+
 }
 
 // LogGinClient logs a custom client request and response for Gin.

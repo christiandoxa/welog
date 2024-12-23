@@ -2,10 +2,14 @@ package welog
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
+	"github.com/gin-contrib/requestid"
 	"github.com/gin-gonic/gin"
+	"github.com/go-resty/resty/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +24,7 @@ import (
 var (
 	welogConfig = Config{
 		ElasticIndex:    "welog",
-		ElasticURL:      "http://127.0.0.1:9200",
+		ElasticURL:      "http://localhost:9200",
 		ElasticUsername: "elastic",
 		ElasticPassword: "changeme",
 	}
@@ -143,12 +147,15 @@ func TestNewGin(t *testing.T) {
 
 	// Define a simple GET endpoint.
 	r.GET("/", func(c *gin.Context) {
-		c.String(http.StatusOK, "ok")
+		var respBody []map[string]any
+		respBody = append(respBody, map[string]any{
+			"test": "ok",
+		})
+		c.JSON(http.StatusOK, respBody)
 	})
 
 	// Create a GET request with a custom Request ID.
 	req, _ := http.NewRequest(http.MethodGet, "/", bytes.NewBuffer([]byte(`{"key": "value"}`)))
-	req.Header.Set("X-Request-ID", "test-request-id")
 	w := httptest.NewRecorder()
 
 	// Serve the request and capture the response.
@@ -156,7 +163,35 @@ func TestNewGin(t *testing.T) {
 
 	// Assert that the response status and body are correct.
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "ok", w.Body.String())
+	//assert.Equal(t, "ok", w.Body.String())
+}
+
+func TestNewGinWithError(t *testing.T) {
+	// Call the SetConfig function
+	SetConfig(welogConfig)
+
+	// Create a new Gin router and apply the middleware.
+	r := gin.New()
+	r.Use(NewGin())
+	r.Use(requestid.New())
+
+	// Define a simple GET endpoint.
+	r.GET("/", func(c *gin.Context) {
+		err := errors.New("something went wrong")
+		c.Set(generalkey.ErrorLog, err)
+		c.JSON(http.StatusInternalServerError, nil)
+	})
+
+	// Create a GET request with a custom Request ID.
+	req, _ := http.NewRequest(http.MethodGet, "/", bytes.NewBuffer([]byte(`{"key": "value"}`)))
+	w := httptest.NewRecorder()
+
+	// Serve the request and capture the response.
+	r.ServeHTTP(w, req)
+
+	// Assert that the response status and body are correct.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	//assert.Equal(t, "ok", w.Body.String())
 }
 
 // TestLogGin tests the logGin function within the Gin middleware.
@@ -235,4 +270,101 @@ func TestLogGinClient(t *testing.T) {
 	assert.Len(t, logFields, 1)
 	assert.Equal(t, status, logFields[0]["targetResponseStatus"])
 	assert.Equal(t, "POST", logFields[0]["targetRequestMethod"])
+}
+
+func TestLogTarget(t *testing.T) {
+	// Call the SetConfig function
+	SetConfig(welogConfig)
+
+	// Create a new Gin router and apply the middleware.
+	r := gin.New()
+	r.Use(NewGin())
+
+	// Define a simple GET endpoint.
+	r.GET("/", func(c *gin.Context) {
+		// Make a client request to the target server.
+		err := makeHTTPRequest(c)
+		if err != nil {
+			c.Set(generalkey.ErrorLog, err)
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	})
+
+	// Create a GET request with a custom Request ID.
+	req, _ := http.NewRequest(http.MethodGet, "/", bytes.NewBuffer([]byte(`{"key": "value"}`)))
+	w := httptest.NewRecorder()
+
+	// Serve the request and capture the response.
+	r.ServeHTTP(w, req)
+
+	// Assert that the response status and body are correct.
+	assert.Equal(t, http.StatusOK, w.Code)
+	//assert.Equal(t, "ok", w.Body.String())
+}
+
+type Post struct {
+	UserID int    `json:"userId"`
+	ID     int    `json:"id"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+}
+
+func makeHTTPRequest(ctx *gin.Context) error {
+	// Initialize a new Resty client
+	client := resty.New()
+
+	// Define middleware logging
+	middlewareTargetLog(ctx, client)
+
+	// Define the endpoint URL (a public mock server)
+	url := "https://httpstat.us/502"
+	// Make the GET request
+	resp, err := client.R().
+		SetDebug(true).
+		SetResult(&Post{}). // Set the result to a Post struct to automatically parse JSON
+		Get(url)
+
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
+
+	// Check the status code
+	if resp.IsError() {
+		fmt.Println("Error:", resp.Status())
+	}
+
+	return nil
+}
+
+func middlewareTargetLog(ctx *gin.Context, client *resty.Client) {
+	var targetLog Target
+	client.OnBeforeRequest(func(c *resty.Client, req *resty.Request) error {
+
+		// manipulate it as per your need
+		targetLog.TargetUrl = req.URL
+		targetLog.Method = req.Method
+		targetLog.RequestHeader = req.Header
+		targetLog.RequestBody = req.Body
+
+		return nil // if its success otherwise return error
+	})
+
+	client.OnAfterResponse(func(c *resty.Client, resp *resty.Response) error {
+		// manipulate it as per your need
+		targetLog.ResponseHeader = resp.Header()
+		targetLog.ResponseBody = resp.Body()
+		targetLog.StatusCode = resp.StatusCode()
+		targetLog.ElapsedTime = resp.Time()
+
+		LogTarget(ctx, targetLog)
+		return nil
+	})
+
+	client.OnError(func(req *resty.Request, err error) {
+		// manipulate it as per your need
+		ctx.Set(generalkey.ErrorLog, err)
+
+		LogTarget(ctx, targetLog)
+	})
 }

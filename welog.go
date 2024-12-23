@@ -24,7 +24,10 @@ type Config struct {
 	ElasticURL      string
 	ElasticUsername string
 	ElasticPassword string
+	ResBodyType     string
 }
+
+var respBodyType string
 
 type Target struct {
 	TargetUrl      string        `json:"target_url"`
@@ -65,6 +68,11 @@ func SetConfig(config Config) {
 	}
 	if err := os.Setenv(envkey.ElasticPassword, config.ElasticPassword); err != nil {
 		logger.Logger().Error(err)
+	}
+	if config.ResBodyType != "" {
+		respBodyType = config.ResBodyType
+	} else {
+		respBodyType = envkey.JSON_TYPE
 	}
 }
 
@@ -252,18 +260,9 @@ func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
 		request = nil
 	}
 
-	responseBody := buf.Bytes()
-
-	if err := json.Unmarshal(responseBody, &response); err != nil {
-		entry.WithError(err).Error("logger_self_log")
-		if e := json.Unmarshal(responseBody, &respArray); e != nil {
-			entry.WithError(e).Error("logger_self_log")
-			//response = nil
-		} else {
-			response["data_array"] = respArray
-		}
-
-	}
+	//if err := json.Unmarshal(responseBody, &response); err != nil {
+	//	entry.WithError(err).Error("logger_self_log")
+	//}
 
 	errContext, ok := c.Get(generalkey.ErrorLog)
 	if ok {
@@ -275,21 +274,45 @@ func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
 			"error_cause":   fmt.Sprintf("%+v", st[5:6]),
 		}
 	}
+	responseBody := buf.Bytes()
+	switch respBodyType {
+	case envkey.STRING_TYPE:
+		entry.WithFields(logrus.Fields{
+			"client_ip":        c.ClientIP(),
+			"real_time_system": time.Now().In(time.UTC).Format("2006-01-02T15:04:05.000"),
+			"elapsed_time":     latency.Milliseconds(),
+			"req_header":       c.Request.Header,
+			"req_body":         request,
+			"req_verb":         c.Request.Method,
+			"req_url":          fmt.Sprintf("%s%s", c.Request.Host, c.Request.URL.String()),
+			"res_header":       c.Writer.Header(),
+			"res_body":         buf.String(),
+			"status_code":      c.Writer.Status(),
+			"error_log":        errorLog,
+		}).Info("client_log")
+	default:
+		err := json.Unmarshal(responseBody, &respArray)
+		if err = json.Unmarshal(responseBody, &respArray); err != nil {
+			entry.WithError(err).Error("logger_self_log")
+			response["data_array"] = respArray
+		}
 
+		entry.WithFields(logrus.Fields{
+			"client_ip":        c.ClientIP(),
+			"real_time_system": time.Now().In(time.UTC).Format("2006-01-02T15:04:05.000"),
+			"elapsed_time":     latency.Milliseconds(),
+			"req_header":       c.Request.Header,
+			"req_body":         request,
+			"req_verb":         c.Request.Method,
+			"req_url":          fmt.Sprintf("%s%s", c.Request.Host, c.Request.URL.String()),
+			"res_header":       c.Writer.Header(),
+			"res_body":         response,
+			"status_code":      c.Writer.Status(),
+			"error_log":        errorLog,
+		}).Info("client_log")
+	}
 	// Log for client request and response
-	entry.WithFields(logrus.Fields{
-		"client_ip":        c.ClientIP(),
-		"real_time_system": time.Now().In(time.UTC).Format("2006-01-02T15:04:05.000"),
-		"elapsed_time":     latency.Milliseconds(),
-		"req_header":       c.Request.Header,
-		"req_body":         request,
-		"req_verb":         c.Request.Method,
-		"req_url":          fmt.Sprintf("%s%s", c.Request.Host, c.Request.URL.String()),
-		"res_header":       c.Writer.Header(),
-		"res_body":         response,
-		"status_code":      c.Writer.Status(),
-		"error_log":        errorLog,
-	}).Info("client_log")
+
 }
 
 // LogGinClient logs a custom client request and response for Gin.

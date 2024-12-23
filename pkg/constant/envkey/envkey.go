@@ -19,3 +19,6 @@ const ElasticURL = "ELASTIC_URL__"
 // ElasticUsername is the environment variable key used to specify the username for authenticating
 // with ElasticSearch. This username, in combination with the password, provides secure access to ElasticSearch.
 const ElasticUsername = "ELASTIC_USERNAME__"
+
+const JSON_TYPE = "json"
+const STRING_TYPE = "string"

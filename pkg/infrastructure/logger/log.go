@@ -99,10 +99,11 @@ func logger() *logrus.Logger {
 	if err != nil {
 		log.Error(err)
 		return log
-	}
+	} else {
+		log.Hooks.Add(hook)
+		hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ecslogrus.Formatter{})
 
-	hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ecslogrus.Formatter{})
-	log.Hooks.Add(hook)
+	}
 
 	return log
 }
@@ -202,7 +203,7 @@ func Logger() *logrus.Logger {
 
 		instance = logger()
 
-		go monitorConnection() // Start the connection monitoring in a separate goroutine
+		//go monitorConnection() // Start the connection monitoring in a separate goroutine
 	})
 
 	mutex.Lock()

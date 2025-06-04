@@ -4,6 +4,7 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/elastic/go-elasticsearch/v8"
@@ -11,6 +12,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.elastic.co/ecslogrus"
 	"gopkg.in/go-extras/elogrus.v8"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"sync"
@@ -63,6 +66,15 @@ func logger() *logrus.Logger {
 		Addresses: []string{elasticURL},
 		Username:  os.Getenv(envkey.ElasticUsername),
 		Password:  os.Getenv(envkey.ElasticPassword),
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   3 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   3 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
 	})
 
 	if err != nil {
@@ -115,21 +127,23 @@ func monitorConnection() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			mutex.Lock()
-			if client != nil {
-				_, err := client.Ping()
-				if err != nil {
-					// Re-initialize the client and hooks
-					reinitializeLogger(instance)
-				}
-			} else {
-				reinitializeLogger(instance)
-			}
+	for range ticker.C {
+		mutex.Lock()
+
+		if client == nil {
+			reinitializeLogger(instance)
 			mutex.Unlock()
+			continue
 		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err := client.Ping(client.Ping.WithContext(ctx))
+		cancel()
+
+		if err != nil {
+			reinitializeLogger(instance)
+		}
+		mutex.Unlock()
 	}
 }
 

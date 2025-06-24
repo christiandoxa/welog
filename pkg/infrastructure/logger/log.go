@@ -4,17 +4,22 @@
 package logger
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"sync"
+	"time"
+
 	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/goccy/go-json"
 	"github.com/sirupsen/logrus"
 	"go.elastic.co/ecslogrus"
 	"gopkg.in/go-extras/elogrus.v8"
-	"net/url"
-	"os"
-	"sync"
-	"time"
 )
 
 var (
@@ -29,14 +34,11 @@ var (
 // log entry is preserved.
 func ecsLogMessageModifierFunc(formatter *ecslogrus.Formatter) func(*logrus.Entry, *elogrus.Message) any {
 	return func(entry *logrus.Entry, _ *elogrus.Message) any {
-		var data json.RawMessage
-
 		data, err := formatter.Format(entry)
 		if err != nil {
-			return entry // in case of an error just preserve the original entry
+			return entry
 		}
-
-		return data
+		return json.RawMessage(data)
 	}
 }
 
@@ -59,40 +61,49 @@ func logger() *logrus.Logger {
 		return log
 	}
 
+	// Configure HTTP transport with dial and header timeouts.
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ResponseHeaderTimeout: 5 * time.Second,
+	}
+
 	c, err := elasticsearch.NewClient(elasticsearch.Config{
 		Addresses: []string{elasticURL},
 		Username:  os.Getenv(envkey.ElasticUsername),
 		Password:  os.Getenv(envkey.ElasticPassword),
+		Transport: transport,
 	})
-
 	if err != nil {
-		log.Error(err)
+		log.Error("Failed to create ES client: ", err)
 		return log
 	}
 
-	res, err := c.Ping()
+	// Ping with a 2-second timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	res, err := c.Ping(c.Ping.WithContext(ctx))
 	if err != nil {
-		log.Error(err)
+		log.Warn("Elasticsearch ping failed, skipping ES hook: ", err)
+		client = nil
 		return log
 	}
-	if res != nil {
-		err = res.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
 		if err != nil {
 			log.Error(err)
-			return log
 		}
-	}
+	}(res.Body)
 
 	client = c
 
-	// Parse URL
 	parsedURL, err := url.Parse(elasticURL)
 	if err != nil {
 		log.Error(err)
 		return log
 	}
-
-	// Parse hostname
 	host := parsedURL.Hostname()
 
 	hook, err := elogrus.NewElasticHookWithFunc(client, host, logrus.TraceLevel, indexNameFunc)
@@ -100,7 +111,6 @@ func logger() *logrus.Logger {
 		log.Error(err)
 		return log
 	}
-
 	hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ecslogrus.Formatter{})
 	log.Hooks.Add(hook)
 
@@ -114,22 +124,19 @@ func logger() *logrus.Logger {
 func monitorConnection() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			mutex.Lock()
-			if client != nil {
-				_, err := client.Ping()
-				if err != nil {
-					// Re-initialize the client and hooks
-					reinitializeLogger(instance)
-				}
-			} else {
+	for range ticker.C {
+		mutex.Lock()
+		if client != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, err := client.Ping(client.Ping.WithContext(ctx))
+			cancel()
+			if err != nil {
 				reinitializeLogger(instance)
 			}
-			mutex.Unlock()
+		} else {
+			reinitializeLogger(instance)
 		}
+		mutex.Unlock()
 	}
 }
 
@@ -144,43 +151,47 @@ func reinitializeLogger(log *logrus.Logger) {
 		return
 	}
 
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ResponseHeaderTimeout: 5 * time.Second,
+	}
+
 	c, err := elasticsearch.NewClient(elasticsearch.Config{
 		Addresses: []string{elasticURL},
 		Username:  os.Getenv(envkey.ElasticUsername),
 		Password:  os.Getenv(envkey.ElasticPassword),
+		Transport: transport,
 	})
-
 	if err != nil {
-		log.Error(err)
+		log.Error("Failed to create ES client during reinit: ", err)
 		return
 	}
 
-	res, err := c.Ping()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	res, err := c.Ping(c.Ping.WithContext(ctx))
 	if err != nil {
-		log.Error(err)
+		log.Warn("Elasticsearch ping failed during reinit, retaining old client: ", err)
 		return
 	}
-	if res != nil {
-		err = res.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
 		if err != nil {
 			log.Error(err)
-			return
 		}
-	}
+	}(res.Body)
 
 	client = c
-
-	// Remove all existing hooks
 	log.ReplaceHooks(make(logrus.LevelHooks))
 
-	// Parse URL
 	parsedURL, err := url.Parse(elasticURL)
 	if err != nil {
 		log.Error(err)
 		return
 	}
-
-	// Parse hostname
 	host := parsedURL.Hostname()
 
 	hook, err := elogrus.NewElasticHookWithFunc(client, host, logrus.TraceLevel, indexNameFunc)
@@ -188,7 +199,6 @@ func reinitializeLogger(log *logrus.Logger) {
 		log.Error(err)
 		return
 	}
-
 	hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ecslogrus.Formatter{})
 	log.Hooks.Add(hook)
 }
@@ -199,14 +209,11 @@ func Logger() *logrus.Logger {
 	once.Do(func() {
 		mutex.Lock()
 		defer mutex.Unlock()
-
 		instance = logger()
-
-		go monitorConnection() // Start the connection monitoring in a separate goroutine
+		go monitorConnection()
 	})
 
 	mutex.Lock()
 	defer mutex.Unlock()
-
 	return instance
 }

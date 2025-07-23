@@ -22,7 +22,7 @@ jobs:
         with:
           go-version: 1.23.2
 
-      - name: Install dependencies
+      - name: Install Go dependencies
         run: go mod download
 
       - name: Cache Go modules
@@ -38,13 +38,17 @@ jobs:
       - name: Clone docker-elk repository
         run: git clone https://github.com/deviantony/docker-elk.git
 
-      - name: Set up Docker environment
+      - name: Build ELK images
         working-directory: docker-elk
-        run: docker compose up setup
+        run: docker compose build
 
-      - name: Start Docker environment
+      - name: Initialize ELK (setup)
         working-directory: docker-elk
-        run: docker compose up -d
+        run: docker compose up --build setup
+
+      - name: Start ELK in detached mode
+        working-directory: docker-elk
+        run: docker compose up --build -d
 
       - name: Run tests
         run: go test ./... -v

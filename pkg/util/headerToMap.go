@@ -8,16 +8,18 @@ func HeaderToMap(header interface{}) map[string]interface{} {
 
 	// check if header is *fasthttp.ResponseHeader or *fasthttp.RequestHeader
 
-	switch header.(type) {
+	switch h := header.(type) {
 
 	case *fasthttp.ResponseHeader:
-		header.(*fasthttp.ResponseHeader).VisitAll(func(key, value []byte) {
+		h.All()(func(key, value []byte) bool {
 			headersMap[string(key)] = string(value)
+			return true
 		})
 
 	case *fasthttp.RequestHeader:
-		header.(*fasthttp.RequestHeader).VisitAll(func(key, value []byte) {
+		h.All()(func(key, value []byte) bool {
 			headersMap[string(key)] = string(value)
+			return true
 		})
 
 	}

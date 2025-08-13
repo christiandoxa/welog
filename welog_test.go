@@ -2,23 +2,25 @@ package welog
 
 import (
 	"bytes"
-	"github.com/christiandoxa/welog/pkg/constant/envkey"
-	"github.com/christiandoxa/welog/pkg/constant/generalkey"
-	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
-	"github.com/gin-gonic/gin"
-	"github.com/gofiber/fiber/v2"
-	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
-	"github.com/valyala/fasthttp"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/christiandoxa/welog/pkg/constant/envkey"
+	"github.com/christiandoxa/welog/pkg/constant/generalkey"
+	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
+	"github.com/christiandoxa/welog/pkg/model"
+	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	"github.com/valyala/fasthttp"
 )
 
 var (
-	welogConfig = Config{
+	welogConfig = model.Config{
 		ElasticIndex:    "welog",
 		ElasticURL:      "http://127.0.0.1:9200",
 		ElasticUsername: "elastic",
@@ -74,25 +76,24 @@ func TestLogFiber(t *testing.T) {
 	// Create a new Fiber app.
 	app := fiber.New()
 
-	// Create a POST request with a JSON body.
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBuffer([]byte(`{"key": "value"}`)))
-	req.Header.Set("Content-Type", "application/json")
-	resp := httptest.NewRecorder()
-
 	// Define a middleware that logs the request using logFiber.
 	app.Use(func(c *fiber.Ctx) error {
-		c.Locals(generalkey.Logger, logger.Logger().WithField(generalkey.RequestID, c.Locals("requestid")))
+		// minimal setup Locals
+		c.Locals(generalkey.RequestID, "test-request-id")
+		c.Locals(generalkey.Logger, logger.Logger().WithField(generalkey.RequestID, "test-request-id"))
 		c.Locals(generalkey.ClientLog, []logrus.Fields{})
 		logFiber(c, time.Now())
 		return c.SendStatus(fiber.StatusOK)
 	})
 
-	// Perform the request and capture the response.
-	_, err := app.Test(req, -1) //nolint:bodyclose
-	assert.NoError(t, err)
+	// Create a POST request with a JSON body.
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBuffer([]byte(`{"key": "value"}`)))
+	req.Header.Set("Content-Type", "application/json")
 
-	// Assert that the status code is 200 OK.
-	assert.Equal(t, fiber.StatusOK, resp.Code)
+	// Perform the request and capture the response.
+	resp, err := app.Test(req, 5000) //nolint:bodyclose
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
 // TestLogFiberClient tests the LogFiberClient function to ensure it logs client requests and responses correctly.
@@ -111,25 +112,29 @@ func TestLogFiberClient(t *testing.T) {
 	// Set initial client log fields.
 	fiberCtx.Locals(generalkey.ClientLog, []logrus.Fields{})
 
-	// Define test input values.
-	url := "https://example.com"
-	method := "GET"
-	contentType := "application/json"
-	header := map[string]interface{}{"Content-Type": "application/json"}
-	responseHeader := map[string]interface{}{"Content-Type": "application/json"}
-	body := []byte(`{"test": "data"}`)
-	response := []byte(`{"response": "ok"}`)
-	status := http.StatusOK
-	start := time.Now()
-	elapsed := 100 * time.Millisecond
+	// Define test input values using the new model structs.
+	reqModel := model.TargetRequest{
+		URL:         "https://example.com",
+		Method:      "GET",
+		ContentType: "application/json",
+		Header:      map[string]interface{}{"Content-Type": "application/json"},
+		Body:        []byte(`{"test": "data"}`),
+		Timestamp:   time.Now(),
+	}
+	resModel := model.TargetResponse{
+		Header:  map[string]interface{}{"Content-Type": "application/json"},
+		Body:    []byte(`{"response": "ok"}`),
+		Status:  http.StatusOK,
+		Latency: 100 * time.Millisecond,
+	}
 
 	// Log the client request and response.
-	LogFiberClient(fiberCtx, url, method, contentType, header, body, responseHeader, response, status, start, elapsed)
+	LogFiberClient(fiberCtx, reqModel, resModel)
 
 	// Retrieve the client log and assert that it contains the correct values.
 	clientLog := fiberCtx.Locals(generalkey.ClientLog).([]logrus.Fields)
 	assert.Len(t, clientLog, 1)
-	assert.Equal(t, status, clientLog[0]["targetResponseStatus"])
+	assert.Equal(t, resModel.Status, clientLog[0]["targetResponseStatus"])
 }
 
 // TestNewGin tests the NewGin middleware to ensure it sets up the Gin application correctly.
@@ -148,7 +153,7 @@ func TestNewGin(t *testing.T) {
 
 	// Create a GET request with a custom Request ID.
 	req, _ := http.NewRequest(http.MethodGet, "/", bytes.NewBuffer([]byte(`{"key": "value"}`)))
-	req.Header.Set("X-Request-ID", "test-request-id")
+	req.Header.Set(generalkey.RequestIDHeader, "test-request-id")
 	w := httptest.NewRecorder()
 
 	// Serve the request and capture the response.
@@ -213,26 +218,30 @@ func TestLogGinClient(t *testing.T) {
 	// Set initial client log fields.
 	c.Set(generalkey.ClientLog, []logrus.Fields{})
 
-	// Define test input values.
-	url := "https://example.com"
-	method := "POST"
-	contentType := "application/json"
-	header := map[string]interface{}{"Content-Type": "application/json"}
-	responseHeader := map[string]interface{}{"Content-Type": "application/json"}
-	body := []byte(`{"test": "data"}`)
-	response := []byte(`{"response": "ok"}`)
-	status := http.StatusOK
-	start := time.Now()
-	elapsed := 100 * time.Millisecond
+	// Define test input values using the new model structs.
+	reqModel := model.TargetRequest{
+		URL:         "https://example.com",
+		Method:      "POST",
+		ContentType: "application/json",
+		Header:      map[string]interface{}{"Content-Type": "application/json"},
+		Body:        []byte(`{"test": "data"}`),
+		Timestamp:   time.Now(),
+	}
+	resModel := model.TargetResponse{
+		Header:  map[string]interface{}{"Content-Type": "application/json"},
+		Body:    []byte(`{"response": "ok"}`),
+		Status:  http.StatusOK,
+		Latency: 100 * time.Millisecond,
+	}
 
 	// Log the client request and response.
-	LogGinClient(c, url, method, contentType, header, body, responseHeader, response, status, start, elapsed)
+	LogGinClient(c, reqModel, resModel)
 
 	// Retrieve the client log and assert that it contains the correct values.
 	clientLog, exists := c.Get(generalkey.ClientLog)
 	assert.True(t, exists)
 	logFields := clientLog.([]logrus.Fields)
 	assert.Len(t, logFields, 1)
-	assert.Equal(t, status, logFields[0]["targetResponseStatus"])
-	assert.Equal(t, "POST", logFields[0]["targetRequestMethod"])
+	assert.Equal(t, resModel.Status, logFields[0]["targetResponseStatus"])
+	assert.Equal(t, reqModel.Method, logFields[0]["targetRequestMethod"])
 }

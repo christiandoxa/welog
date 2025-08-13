@@ -14,3 +14,7 @@ const Logger = "logger"
 // RequestID is the context key used to store the unique request identifier for each incoming request.
 // This key helps track individual requests across various logs and enhances traceability.
 const RequestID = "requestId"
+
+// RequestIDHeader is the header used to pass the unique request identifier for each incoming request.
+// It is used to identify the request within the context of the server's logging and processing.
+const RequestIDHeader = "X-Request-ID"

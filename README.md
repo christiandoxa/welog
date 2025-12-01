@@ -20,7 +20,7 @@ It provides detailed request/response logging for popular Go web frameworks such
 
 ```bash
 go get github.com/christiandoxa/welog
-````
+```
 
 ---
 
@@ -30,17 +30,13 @@ go get github.com/christiandoxa/welog
 package main
 
 import (
-    "net/http"
-    "time"
-
     "github.com/christiandoxa/welog"
-    "github.com/christiandoxa/welog/pkg/model"
     "github.com/gofiber/fiber/v2"
 )
 
 func main() {
     // 1. Configure ElasticSearch connection
-    welog.SetConfig(model.Config{
+	welog.SetConfig(welog.Config{
         ElasticIndex:    "my-logs",
         ElasticURL:      "http://localhost:9200",
         ElasticUsername: "elastic",
@@ -64,7 +60,7 @@ func main() {
 
 ## Configuration
 
-Welog uses `model.Config` to store ElasticSearch connection details:
+Welog exposes `welog.Config` to store ElasticSearch connection details:
 
 ```go
 type Config struct {
@@ -78,7 +74,7 @@ type Config struct {
 Set it at application startup using:
 
 ```go
-welog.SetConfig(model.Config{
+welog.SetConfig(welog.Config{
     ElasticIndex:    "my-logs",
     ElasticURL:      "http://localhost:9200",
     ElasticUsername: "elastic",
@@ -88,12 +84,12 @@ welog.SetConfig(model.Config{
 
 ### Environment Variables Used
 
-| Variable           | Description              |
-| ------------------ | ------------------------ |
-| `ELASTIC_INDEX`    | ElasticSearch index name |
-| `ELASTIC_URL`      | ElasticSearch base URL   |
-| `ELASTIC_USERNAME` | ElasticSearch username   |
-| `ELASTIC_PASSWORD` | ElasticSearch password   |
+| Variable             | Description              |
+|----------------------|--------------------------|
+| `ELASTIC_INDEX__`    | ElasticSearch index name |
+| `ELASTIC_URL__`      | ElasticSearch base URL   |
+| `ELASTIC_USERNAME__` | ElasticSearch username   |
+| `ELASTIC_PASSWORD__` | ElasticSearch password   |
 
 ---
 

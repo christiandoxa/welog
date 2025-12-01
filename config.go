@@ -1,4 +1,4 @@
-package model
+package welog
 
 type Config struct {
 	ElasticIndex    string

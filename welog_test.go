@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	welogConfig = model.Config{
+	welogConfig = Config{
 		ElasticIndex:    "welog",
 		ElasticURL:      "http://127.0.0.1:9200",
 		ElasticUsername: "elastic",

@@ -31,7 +31,7 @@ func (w responseBodyWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-func SetConfig(config model.Config) {
+func SetConfig(config Config) {
 	if err := os.Setenv(envkey.ElasticIndex, config.ElasticIndex); err != nil {
 		logger.Logger().Error(err)
 	}

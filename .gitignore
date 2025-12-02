@@ -49,3 +49,7 @@ Thumbs.db
 
 # env file
 .env
+
+# unit test
+*.out
+.cache/

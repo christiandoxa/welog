@@ -19,6 +19,7 @@ import (
 
 	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/elastic/go-elasticsearch/v8"
+	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/sirupsen/logrus"
@@ -32,6 +33,13 @@ var (
 	once     sync.Once             // Ensures the logger is initialized only once
 	mutex    sync.Mutex            // Protects access to the logger instance and client
 	fileLock sync.Mutex            // Protects fallback log file operations
+
+	newESClient     = elasticsearch.NewClient
+	pingWithContext = func(c *elasticsearch.Client, ctx context.Context) (*esapi.Response, error) {
+		return c.Ping(c.Ping.WithContext(ctx))
+	}
+	tickerFactory = time.NewTicker
+	monitorStop   <-chan struct{}
 )
 
 const asyncHookBufferSize = 256 // buffered channel size to avoid blocking during outages
@@ -79,7 +87,7 @@ func logger() *logrus.Logger {
 		ResponseHeaderTimeout: 5 * time.Second,
 	}
 
-	c, err := elasticsearch.NewClient(elasticsearch.Config{
+	c, err := newESClient(elasticsearch.Config{
 		Addresses: []string{elasticURL},
 		Username:  os.Getenv(envkey.ElasticUsername),
 		Password:  os.Getenv(envkey.ElasticPassword),
@@ -93,7 +101,7 @@ func logger() *logrus.Logger {
 	// Ping with a 2-second timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	res, err := c.Ping(c.Ping.WithContext(ctx))
+	res, err := pingWithContext(c, ctx)
 	if err != nil {
 		logInstance.Warn("Elasticsearch ping failed, skipping ES hook: ", err)
 		client = nil
@@ -131,13 +139,18 @@ func logger() *logrus.Logger {
 // This ensures that even if the ElasticSearch instance is restarted, the application
 // will continue to log to ElasticSearch once the connection is re-established.
 func monitorConnection() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := tickerFactory(10 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-ticker.C:
+		case <-monitorStop:
+			return
+		}
 		mutex.Lock()
 		if client != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_, err := client.Ping(client.Ping.WithContext(ctx))
+			_, err := pingWithContext(client, ctx)
 			cancel()
 			if err != nil {
 				reinitializeLogger(instance)
@@ -168,7 +181,7 @@ func reinitializeLogger(log *logrus.Logger) {
 		ResponseHeaderTimeout: 5 * time.Second,
 	}
 
-	c, err := elasticsearch.NewClient(elasticsearch.Config{
+	c, err := newESClient(elasticsearch.Config{
 		Addresses: []string{elasticURL},
 		Username:  os.Getenv(envkey.ElasticUsername),
 		Password:  os.Getenv(envkey.ElasticPassword),
@@ -181,7 +194,7 @@ func reinitializeLogger(log *logrus.Logger) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	res, err := c.Ping(c.Ping.WithContext(ctx))
+	res, err := pingWithContext(c, ctx)
 	if err != nil {
 		log.Warn("Elasticsearch ping failed during reinit, retaining old client: ", err)
 		return

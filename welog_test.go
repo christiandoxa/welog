@@ -2,6 +2,7 @@ package welog
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,6 +46,26 @@ func TestSetConfig(t *testing.T) {
 
 	elasticPassword := os.Getenv(envkey.ElasticPassword)
 	assert.Equal(t, welogConfig.ElasticPassword, elasticPassword, "ElasticPassword should be set correctly")
+}
+
+func TestSetConfigWithError(t *testing.T) {
+	original := setenv
+	defer func() {
+		setenv = original
+	}()
+
+	setenv = func(key, value string) error {
+		if key == envkey.ElasticURL {
+			return errors.New("forced error")
+		}
+		return os.Setenv(key, value)
+	}
+
+	SetConfig(welogConfig)
+
+	assert.Equal(t, welogConfig.ElasticIndex, os.Getenv(envkey.ElasticIndex))
+	assert.Equal(t, welogConfig.ElasticUsername, os.Getenv(envkey.ElasticUsername))
+	assert.Equal(t, welogConfig.ElasticPassword, os.Getenv(envkey.ElasticPassword))
 }
 
 // TestNewFiber tests the NewFiber middleware to ensure it sets up the Fiber application correctly.

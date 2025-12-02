@@ -19,6 +19,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+var setenv = os.Setenv
+
 // responseBodyWriter is a custom response writer that captures the response body.
 type responseBodyWriter struct {
 	gin.ResponseWriter
@@ -32,16 +34,16 @@ func (w responseBodyWriter) Write(b []byte) (int, error) {
 }
 
 func SetConfig(config Config) {
-	if err := os.Setenv(envkey.ElasticIndex, config.ElasticIndex); err != nil {
+	if err := setenv(envkey.ElasticIndex, config.ElasticIndex); err != nil {
 		logger.Logger().Error(err)
 	}
-	if err := os.Setenv(envkey.ElasticURL, config.ElasticURL); err != nil {
+	if err := setenv(envkey.ElasticURL, config.ElasticURL); err != nil {
 		logger.Logger().Error(err)
 	}
-	if err := os.Setenv(envkey.ElasticUsername, config.ElasticUsername); err != nil {
+	if err := setenv(envkey.ElasticUsername, config.ElasticUsername); err != nil {
 		logger.Logger().Error(err)
 	}
-	if err := os.Setenv(envkey.ElasticPassword, config.ElasticPassword); err != nil {
+	if err := setenv(envkey.ElasticPassword, config.ElasticPassword); err != nil {
 		logger.Logger().Error(err)
 	}
 }

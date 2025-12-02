@@ -1,20 +1,20 @@
-# Welog
-
-[![Go Test](https://github.com/christiandoxa/welog/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/christiandoxa/welog/actions/workflows/test.yml)
+# Welog [![Go Test](https://github.com/christiandoxa/welog/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/christiandoxa/welog/actions/workflows/test.yml)
 
 **Welog** is a structured logging library for Go applications, integrating with **ElasticSearch** and powered by [Logrus](https://github.com/sirupsen/logrus).  
-It provides detailed request/response logging for popular Go web frameworks such as **Fiber** and **Gin**, and supports both server-side and client-side HTTP logging.
+It provides detailed request/response logging for **Fiber**, **Gin**, and **gRPC** (via go-grpc-middleware), covering
+both server-side and client-side calls.
 
 ---
 
 ## Features
 
-- 📦 **Plug-and-play** middleware for Fiber and Gin
+- 📦 **Plug-and-play** middleware for Fiber, Gin, and gRPC interceptors
 - 📝 **Structured JSON logs** via Logrus
 - 🔍 **Detailed request/response tracing** with latency and metadata
 - 🔗 **ElasticSearch integration** for centralized log storage
 - 🎯 **Context-aware logging** for handlers
 - 🔄 **Client request logging** for outbound HTTP calls
+- 🔌 **gRPC interceptors** ready for go-grpc-middleware chains
 
 ---
 
@@ -111,6 +111,20 @@ router := gin.Default()
 router.Use(welog.NewGin())
 ```
 
+### gRPC
+
+```go
+import (
+grpcmiddleware "github.com/grpc-ecosystem/go-grpc-middleware/v2"
+"google.golang.org/grpc"
+)
+
+server := grpc.NewServer(
+grpcmiddleware.WithUnaryServerChain(welog.NewGRPCUnary()),
+grpcmiddleware.WithStreamServerChain(welog.NewGRPCStream()),
+)
+```
+
 ---
 
 ## Client Request Logging
@@ -151,6 +165,12 @@ welog.LogFiberClient(c, reqModel, resModel)
 welog.LogGinClient(c, reqModel, resModel)
 ```
 
+### gRPC Example
+
+```go
+welog.LogGRPCClient(ctx, reqModel, resModel)
+```
+
 ---
 
 ## Logging Inside Handlers
@@ -167,6 +187,13 @@ c.Locals("logger").(*logrus.Entry).Error("Something went wrong")
 
 ```go
 c.MustGet("logger").(*logrus.Entry).Error("Something went wrong")
+```
+
+### gRPC
+
+```go
+entry := ctx.Value("logger").(*logrus.Entry)
+entry.Error("Something went wrong")
 ```
 
 ---

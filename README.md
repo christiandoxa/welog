@@ -1,5 +1,7 @@
 # Welog
 
+[![Go Test](https://github.com/christiandoxa/welog/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/christiandoxa/welog/actions/workflows/test.yml)
+
 **Welog** is a structured logging library for Go applications, integrating with **ElasticSearch** and powered by [Logrus](https://github.com/sirupsen/logrus).  
 It provides detailed request/response logging for popular Go web frameworks such as **Fiber** and **Gin**, and supports both server-side and client-side HTTP logging.
 

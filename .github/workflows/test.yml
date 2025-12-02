@@ -50,8 +50,19 @@ jobs:
         working-directory: docker-elk
         run: docker compose up --build -d
 
-      - name: Run tests
-        run: go test ./... -v
+      - name: Run tests with coverage
+        run: go test ./... -v -covermode=atomic -coverpkg=./... -coverprofile=coverage.out
+
+      - name: Enforce coverage threshold
+        run: |
+          coverage=$(go tool cover -func=coverage.out | awk '/total:/ {gsub("%","",$3); print $3}')
+          threshold=80.0
+          if awk "BEGIN {exit !($coverage >= $threshold)}"; then
+            echo "Coverage ${coverage}% meets threshold ${threshold}%"
+          else
+            echo "Coverage ${coverage}% is below threshold ${threshold}%"
+            exit 1
+          fi
 
       - name: Lint the code
         run: |

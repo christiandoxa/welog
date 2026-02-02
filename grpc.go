@@ -104,9 +104,6 @@ func fetchRequestID(ctx context.Context) string {
 		if vals := md[strings.ToLower(generalkey.RequestIDHeader)]; len(vals) > 0 && vals[0] != "" {
 			return vals[0]
 		}
-		if vals := md[requestIDMetadataKey]; len(vals) > 0 && vals[0] != "" {
-			return vals[0]
-		}
 	}
 
 	return uuid.NewString()

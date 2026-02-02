@@ -39,3 +39,27 @@ func TestBuildTargetLogFields(t *testing.T) {
 	assert.Equal(t, res.Latency.String(), fields["targetResponseLatency"])
 	assert.Equal(t, reqTime.Add(time.Second).Format(time.RFC3339Nano), fields["targetResponseTimestamp"])
 }
+
+func TestBuildTargetLogFieldsInvalidJSON(t *testing.T) {
+	reqTime := time.Date(2024, 2, 3, 4, 5, 6, 0, time.UTC)
+	req := model.TargetRequest{
+		URL:         "https://example.com/api",
+		Method:      "POST",
+		ContentType: "application/json",
+		Header:      map[string]interface{}{"Content-Type": "application/json"},
+		Body:        []byte("{"),
+		Timestamp:   reqTime,
+	}
+	res := model.TargetResponse{
+		Header:  map[string]interface{}{"X-Trace": "bad"},
+		Body:    []byte("{"),
+		Status:  500,
+		Latency: 2 * time.Second,
+	}
+
+	fields := BuildTargetLogFields(req, res)
+
+	assert.Equal(t, "{", fields["targetRequestBodyString"])
+	assert.Equal(t, "{", fields["targetResponseBodyString"])
+	assert.Equal(t, reqTime.Add(2*time.Second).Format(time.RFC3339Nano), fields["targetResponseTimestamp"])
+}

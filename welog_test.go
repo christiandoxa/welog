@@ -3,12 +3,15 @@ package welog
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/user"
 	"testing"
 	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
@@ -265,4 +268,146 @@ func TestLogGinClient(t *testing.T) {
 	assert.Len(t, logFields, 1)
 	assert.Equal(t, resModel.Status, logFields[0]["targetResponseStatus"])
 	assert.Equal(t, reqModel.Method, logFields[0]["targetRequestMethod"])
+}
+
+type errReadCloser struct {
+	data     []byte
+	readOnce bool
+}
+
+func (e *errReadCloser) Read(p []byte) (int, error) {
+	if e.readOnce {
+		return 0, io.ErrUnexpectedEOF
+	}
+	e.readOnce = true
+	n := copy(p, e.data)
+	return n, errors.New("read failed")
+}
+
+func (e *errReadCloser) Close() error { return nil }
+
+func TestSetConfigAllErrors(t *testing.T) {
+	original := setenv
+	defer func() {
+		setenv = original
+	}()
+
+	setenv = func(string, string) error {
+		return errors.New("setenv error")
+	}
+
+	SetConfig(Config{
+		ElasticIndex:    "idx",
+		ElasticURL:      "url",
+		ElasticUsername: "user",
+		ElasticPassword: "pass",
+	})
+}
+
+func TestNewFiberErrorHandler(t *testing.T) {
+	SetConfig(welogConfig)
+
+	app := fiber.New()
+	app.Use(NewFiber(fiber.Config{
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			return err
+		},
+	}))
+	app.Get("/", func(c *fiber.Ctx) error {
+		return fiber.ErrBadRequest
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	resp, err := app.Test(req, 5000) //nolint:bodyclose
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestLogFiberUserCurrentError(t *testing.T) {
+	SetConfig(welogConfig)
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+	patches.ApplyFuncReturn(user.Current, &user.User{Username: "tester"}, errors.New("user error"))
+
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals(generalkey.RequestID, "test-request-id")
+		c.Locals(generalkey.Logger, logger.Logger().WithField(generalkey.RequestID, "test-request-id"))
+		c.Locals(generalkey.ClientLog, []logrus.Fields{})
+		logFiber(c, time.Now())
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBuffer([]byte("{")))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestNewGinGeneratesRequestID(t *testing.T) {
+	SetConfig(welogConfig)
+
+	r := gin.New()
+	r.Use(NewGin())
+	r.GET("/", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	req, _ := http.NewRequest(http.MethodGet, "/", bytes.NewBuffer(nil))
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotEmpty(t, w.Header().Get(generalkey.RequestIDHeader))
+}
+
+func TestLogGinErrorPaths(t *testing.T) {
+	SetConfig(welogConfig)
+
+	patches := gomonkey.NewPatches()
+	defer patches.Reset()
+	patches.ApplyFuncReturn(user.Current, &user.User{Username: "tester"}, errors.New("user error"))
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	c.Request, _ = http.NewRequest(http.MethodPost, "/", &errReadCloser{data: []byte("{")})
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(generalkey.Logger, logrus.New().WithField(generalkey.RequestID, "rid"))
+	c.Set(generalkey.ClientLog, []logrus.Fields{})
+
+	buf := bytes.NewBufferString("{")
+	logGin(c, buf, time.Now())
+}
+
+func TestLogGinClientMissingExisting(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodPost, "/", bytes.NewBuffer([]byte(`{"key":"value"}`)))
+	w := httptest.NewRecorder()
+
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	reqModel := model.TargetRequest{
+		URL:         "https://example.com",
+		Method:      "POST",
+		ContentType: "application/json",
+		Header:      map[string]interface{}{"Content-Type": "application/json"},
+		Body:        []byte(`{"test": "data"}`),
+		Timestamp:   time.Now(),
+	}
+	resModel := model.TargetResponse{
+		Header:  map[string]interface{}{"Content-Type": "application/json"},
+		Body:    []byte(`{"response": "ok"}`),
+		Status:  http.StatusOK,
+		Latency: 100 * time.Millisecond,
+	}
+
+	LogGinClient(c, reqModel, resModel)
+
+	clientLog, exists := c.Get(generalkey.ClientLog)
+	assert.True(t, exists)
+	assert.Len(t, clientLog.([]logrus.Fields), 1)
 }

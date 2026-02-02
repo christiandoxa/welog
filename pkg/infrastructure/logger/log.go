@@ -40,6 +40,7 @@ var (
 	}
 	tickerFactory = time.NewTicker
 	monitorStop   <-chan struct{}
+	closeFile     = func(f *os.File) error { return f.Close() }
 )
 
 const asyncHookBufferSize = 256 // buffered channel size to avoid blocking during outages
@@ -398,7 +399,7 @@ func trimOldestLines(path string, bytesToFree int64) error {
 		return err
 	}
 	defer func(src *os.File) {
-		err := src.Close()
+		err := closeFile(src)
 		if err != nil {
 			log.Error(err)
 		}

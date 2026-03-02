@@ -24,7 +24,6 @@ import (
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/sirupsen/logrus"
 	"go.elastic.co/ecslogrus"
-	"gopkg.in/go-extras/elogrus.v8"
 )
 
 var (
@@ -50,8 +49,8 @@ const fallbackMaxBytes int64 = 1 << 30 // 1GB
 // ecsLogMessageModifierFunc returns a function that modifies log messages
 // using the ECS log formatter. If an error occurs during formatting, the original
 // log entry is preserved.
-func ecsLogMessageModifierFunc(formatter *ecslogrus.Formatter) func(*logrus.Entry, *elogrus.Message) any {
-	return func(entry *logrus.Entry, _ *elogrus.Message) any {
+func ecsLogMessageModifierFunc(formatter *ecslogrus.Formatter) func(*logrus.Entry, *Message) any {
+	return func(entry *logrus.Entry, _ *Message) any {
 		data, err := formatter.Format(entry)
 		if err != nil {
 			return entry
@@ -124,7 +123,7 @@ func logger() *logrus.Logger {
 	}
 	host := parsedURL.Hostname()
 
-	hook, err := elogrus.NewElasticHookWithFunc(client, host, logrus.TraceLevel, indexNameFunc)
+	hook, err := NewElasticHookWithFunc(client, host, logrus.TraceLevel, indexNameFunc)
 	if err != nil {
 		logInstance.Error(err)
 		return logInstance
@@ -217,7 +216,7 @@ func reinitializeLogger(log *logrus.Logger) {
 	}
 	host := parsedURL.Hostname()
 
-	hook, err := elogrus.NewElasticHookWithFunc(client, host, logrus.TraceLevel, indexNameFunc)
+	hook, err := NewElasticHookWithFunc(client, host, logrus.TraceLevel, indexNameFunc)
 	if err != nil {
 		log.Error(err)
 		return

@@ -32,29 +32,29 @@ go get github.com/christiandoxa/welog
 package main
 
 import (
-    "github.com/christiandoxa/welog"
-    "github.com/gofiber/fiber/v2"
+	"github.com/christiandoxa/welog"
+	"github.com/gofiber/fiber/v2"
 )
 
 func main() {
-    // 1. Configure ElasticSearch connection
+	// 1. Configure ElasticSearch connection
 	welog.SetConfig(welog.Config{
-        ElasticIndex:    "my-logs",
-        ElasticURL:      "http://localhost:9200",
-        ElasticUsername: "elastic",
-        ElasticPassword: "changeme",
-    })
+		ElasticIndex:    "my-logs",
+		ElasticURL:      "http://localhost:9200",
+		ElasticUsername: "elastic",
+		ElasticPassword: "changeme",
+	})
 
-    // 2. Create Fiber app and attach Welog middleware
-    app := fiber.New()
-    app.Use(welog.NewFiber(fiber.Config{}))
+	// 2. Create Fiber app and attach Welog middleware
+	app := fiber.New()
+	app.Use(welog.NewFiber(fiber.Config{}))
 
-    // Example route
-    app.Get("/", func(c *fiber.Ctx) error {
-        return c.JSON(fiber.Map{"message": "hello world"})
-    })
+	// Example route
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"message": "hello world"})
+	})
 
-    app.Listen(":3000")
+	app.Listen(":3000")
 }
 ```
 
@@ -66,10 +66,10 @@ Welog exposes `welog.Config` to store ElasticSearch connection details:
 
 ```go
 type Config struct {
-    ElasticIndex    string
-    ElasticURL      string
-    ElasticUsername string
-    ElasticPassword string
+ElasticIndex    string
+ElasticURL      string
+ElasticUsername string
+ElasticPassword string
 }
 ```
 
@@ -77,10 +77,10 @@ Set it at application startup using:
 
 ```go
 welog.SetConfig(welog.Config{
-    ElasticIndex:    "my-logs",
-    ElasticURL:      "http://localhost:9200",
-    ElasticUsername: "elastic",
-    ElasticPassword: "changeme",
+ElasticIndex:    "my-logs",
+ElasticURL:      "http://localhost:9200",
+ElasticUsername: "elastic",
+ElasticPassword: "changeme",
 })
 ```
 
@@ -135,25 +135,26 @@ Welog supports logging outbound HTTP requests from within your application.
 
 ```go
 import (
-    "time"
-    "net/http"
-    "github.com/christiandoxa/welog/pkg/model"
+"net/http"
+"time"
+
+"github.com/christiandoxa/welog/pkg/model"
 )
 
 reqModel := model.TargetRequest{
-    URL:         "https://example.com/api",
-    Method:      "GET",
-    ContentType: "application/json",
-    Header:      map[string]interface{}{"Authorization": "Bearer token"},
-    Body:        []byte(`{"param":"value"}`),
-    Timestamp:   time.Now(),
+URL:         "https://example.com/api",
+Method:      "GET",
+ContentType: "application/json",
+Header:      map[string]interface{}{"Authorization": "Bearer token"},
+Body:        []byte(`{"param":"value"}`),
+Timestamp:   time.Now(),
 }
 
 resModel := model.TargetResponse{
-    Header:  map[string]interface{}{"Content-Type": "application/json"},
-    Body:    []byte(`{"status":"ok"}`),
-    Status:  http.StatusOK,
-    Latency: 200 * time.Millisecond,
+Header:  map[string]interface{}{"Content-Type": "application/json"},
+Body:    []byte(`{"status":"ok"}`),
+Status:  http.StatusOK,
+Latency: 200 * time.Millisecond,
 }
 
 welog.LogFiberClient(c, reqModel, resModel)

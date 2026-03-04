@@ -23,7 +23,6 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/sirupsen/logrus"
-	"go.elastic.co/ecslogrus"
 )
 
 var (
@@ -49,7 +48,7 @@ const fallbackMaxBytes int64 = 1 << 30 // 1GB
 // ecsLogMessageModifierFunc returns a function that modifies log messages
 // using the ECS log formatter. If an error occurs during formatting, the original
 // log entry is preserved.
-func ecsLogMessageModifierFunc(formatter *ecslogrus.Formatter) func(*logrus.Entry, *Message) any {
+func ecsLogMessageModifierFunc(formatter *ECSFormatter) func(*logrus.Entry, *Message) any {
 	return func(entry *logrus.Entry, _ *Message) any {
 		data, err := formatter.Format(entry)
 		if err != nil {
@@ -69,7 +68,7 @@ func indexNameFunc() string {
 // the logger with ECS formatting and integrates it with ElasticSearch for centralized logging.
 func logger() *logrus.Logger {
 	logInstance := logrus.New()
-	logInstance.SetFormatter(&ecslogrus.Formatter{})
+	logInstance.SetFormatter(&ECSFormatter{})
 	logInstance.SetReportCaller(true)
 
 	elasticURL := os.Getenv(envkey.ElasticURL)
@@ -128,7 +127,7 @@ func logger() *logrus.Logger {
 		logInstance.Error(err)
 		return logInstance
 	}
-	hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ecslogrus.Formatter{})
+	hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ECSFormatter{})
 	logInstance.Hooks.Add(newAsyncHook(hook))
 
 	return logInstance
@@ -221,7 +220,7 @@ func reinitializeLogger(log *logrus.Logger) {
 		log.Error(err)
 		return
 	}
-	hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ecslogrus.Formatter{})
+	hook.MessageModifierFunc = ecsLogMessageModifierFunc(&ECSFormatter{})
 	log.Hooks.Add(newAsyncHook(hook))
 }
 

@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -23,11 +25,27 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.elastic.co/ecslogrus"
 )
 
 type stubHook struct {
 	entries chan *logrus.Entry
+}
+
+type ecsStackError struct{}
+
+func (ecsStackError) Error() string { return "boom" }
+
+func (ecsStackError) Format(state fmt.State, verb rune) {
+	switch verb {
+	case 'v':
+		if state.Flag('+') {
+			_, _ = io.WriteString(state, "boom\nstack line")
+			return
+		}
+		_, _ = io.WriteString(state, "boom")
+	case 's':
+		_, _ = io.WriteString(state, "boom")
+	}
 }
 
 func (s *stubHook) Levels() []logrus.Level { return logrus.AllLevels }
@@ -42,7 +60,7 @@ func TestLoggerWithoutElasticURL(t *testing.T) {
 	l := logger()
 
 	require.NotNil(t, l)
-	_, ok := l.Formatter.(*ecslogrus.Formatter)
+	_, ok := l.Formatter.(*ECSFormatter)
 	assert.True(t, ok)
 }
 
@@ -290,7 +308,7 @@ func TestIndexNameFunc(t *testing.T) {
 }
 
 func TestEcsLogMessageModifierFunc(t *testing.T) {
-	formatter := &ecslogrus.Formatter{}
+	formatter := &ECSFormatter{}
 	modifier := ecsLogMessageModifierFunc(formatter)
 
 	entry := logrus.NewEntry(logrus.New())
@@ -307,6 +325,123 @@ func TestEcsLogMessageModifierFunc(t *testing.T) {
 	} else {
 		t.Fatalf("unexpected result type %T", result)
 	}
+}
+
+func TestECSFormatterFormatUsesLatestECSFields(t *testing.T) {
+	log := logrus.New()
+	log.SetReportCaller(true)
+
+	entry := logrus.NewEntry(log)
+	entry.Time = time.Unix(0, 0).UTC()
+	entry.Level = logrus.ErrorLevel
+	entry.Message = "ecs"
+	entry.Data = logrus.Fields{
+		logrus.ErrorKey: ecsStackError{},
+		"custom":        "value",
+	}
+	entry.Caller = &runtime.Frame{
+		Function: "github.com/christiandoxa/welog/pkg/infrastructure/logger.TestFormatter",
+		File:     "/tmp/example/path/log.go",
+		Line:     42,
+	}
+
+	formatted, err := (&ECSFormatter{}).Format(entry)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(formatted, &decoded))
+
+	assert.Equal(t, "1970-01-01T00:00:00.000Z", decoded["@timestamp"])
+	assert.Equal(t, ecsVersion, decoded["ecs.version"])
+	assert.Equal(t, "error", decoded["log.level"])
+	assert.Equal(t, "ecs", decoded["message"])
+	assert.Equal(t, "github.com/christiandoxa/welog/pkg/infrastructure/logger.TestFormatter", decoded["log.origin.function"])
+	assert.Equal(t, "log.go", decoded["log.origin.file.name"])
+	assert.EqualValues(t, 42, decoded["log.origin.file.line"])
+	assert.Equal(t, "value", decoded["custom"])
+
+	errData, ok := decoded["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "boom", errData["message"])
+	assert.Equal(t, "logger.ecsStackError", errData["type"])
+	assert.Equal(t, "boom\nstack line", errData["stack_trace"])
+	assert.NotNil(t, entry.Caller)
+}
+
+func TestECSFormatterFormatWithDataKeyAndPrettyCaller(t *testing.T) {
+	log := logrus.New()
+	log.SetReportCaller(true)
+	entry := logrus.NewEntry(log)
+	entry.Time = time.Unix(0, 0).UTC()
+	entry.Level = logrus.WarnLevel
+	entry.Message = "ecs"
+	entry.Data = logrus.Fields{
+		logrus.ErrorKey: "raw-error",
+		"custom":        "value",
+	}
+	entry.Caller = &runtime.Frame{
+		Function: "ignored",
+		File:     "/tmp/ignored.go",
+		Line:     77,
+	}
+
+	formatter := &ECSFormatter{
+		DataKey:     "labels",
+		PrettyPrint: true,
+		CallerPrettyfier: func(*runtime.Frame) (string, string) {
+			return "pretty.function", "/tmp/path/custom.go:88"
+		},
+	}
+
+	formatted, err := formatter.Format(entry)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(formatted, &decoded))
+
+	assert.Equal(t, ecsVersion, decoded["ecs.version"])
+	assert.Equal(t, "warning", decoded["log.level"])
+	assert.Equal(t, "pretty.function", decoded["log.origin.function"])
+	assert.Equal(t, "custom.go", decoded["log.origin.file.name"])
+	assert.EqualValues(t, 88, decoded["log.origin.file.line"])
+	assert.NotContains(t, decoded, "error")
+
+	labels, ok := decoded["labels"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "value", labels["custom"])
+	assert.Equal(t, "raw-error", labels[logrus.ErrorKey])
+}
+
+func TestBuildECSErrorObjectNil(t *testing.T) {
+	assert.Equal(t, ecsErrorObject{}, buildECSErrorObject(nil))
+}
+
+func TestExtractErrorStackTraceWithoutExtendedFormatter(t *testing.T) {
+	assert.Empty(t, extractErrorStackTrace(errors.New("boom")))
+}
+
+func TestFormatCallerNilFrame(t *testing.T) {
+	functionName, fileName, lineNumber := formatCaller(nil, nil)
+
+	assert.Empty(t, functionName)
+	assert.Empty(t, fileName)
+	assert.Zero(t, lineNumber)
+}
+
+func TestFormatCallerPrettyfierWithoutLineNumber(t *testing.T) {
+	frame := &runtime.Frame{
+		Function: "github.com/christiandoxa/welog/pkg/infrastructure/logger.TestFormatter",
+		File:     "/tmp/example/path/log.go",
+		Line:     42,
+	}
+
+	functionName, fileName, lineNumber := formatCaller(frame, func(*runtime.Frame) (string, string) {
+		return "pretty.function", "/tmp/example/path/log.go:not-a-line"
+	})
+
+	assert.Equal(t, "pretty.function", functionName)
+	assert.Equal(t, "log.go:not-a-line", fileName)
+	assert.Zero(t, lineNumber)
 }
 
 func TestMonitorConnectionTriggersReinit(t *testing.T) {
@@ -522,10 +657,10 @@ func withTempDir(t *testing.T) func() {
 }
 
 func TestEcsLogMessageModifierFuncFormatterError(t *testing.T) {
-	formatter := &ecslogrus.Formatter{}
+	formatter := &ECSFormatter{}
 	patches := gomonkey.NewPatches()
 	defer patches.Reset()
-	patches.ApplyMethod(reflect.TypeOf(formatter), "Format", func(*ecslogrus.Formatter, *logrus.Entry) ([]byte, error) {
+	patches.ApplyMethod(reflect.TypeOf(formatter), "Format", func(*ECSFormatter, *logrus.Entry) ([]byte, error) {
 		return nil, errors.New("format error")
 	})
 

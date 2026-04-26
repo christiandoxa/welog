@@ -16,6 +16,8 @@ import (
 
 var errCannotCreateIndex = fmt.Errorf("cannot create index")
 
+const elasticRequestTimeout = 5 * time.Second
+
 // IndexNameFunc resolves the Elasticsearch index name at write time.
 type IndexNameFunc func() string
 
@@ -72,7 +74,9 @@ func (hook *ElasticHook) Fire(entry *logrus.Entry) error {
 		Body:  bytes.NewReader(data),
 	}
 
-	res, err := req.Do(context.Background(), hook.client)
+	ctx, cancel := context.WithTimeout(context.Background(), elasticRequestTimeout)
+	defer cancel()
+	res, err := req.Do(ctx, hook.client)
 	if err != nil {
 		return err
 	}
@@ -133,17 +137,23 @@ func enabledLevels(level logrus.Level) []logrus.Level {
 func ensureIndexExists(client *elasticsearch.Client, indexFunc IndexNameFunc) error {
 	indexName := indexFunc()
 
-	existsResp, err := client.Indices.Exists([]string{indexName})
+	ctx, cancel := context.WithTimeout(context.Background(), elasticRequestTimeout)
+	defer cancel()
+
+	existsResp, err := client.Indices.Exists([]string{indexName}, client.Indices.Exists.WithContext(ctx))
 	if err != nil {
 		return err
 	}
 	closeBody(existsResp)
 
 	if existsResp.StatusCode != http.StatusNotFound {
+		if existsResp.IsError() {
+			return fmt.Errorf("cannot check index: %s", existsResp.Status())
+		}
 		return nil
 	}
 
-	createResp, err := client.Indices.Create(indexName)
+	createResp, err := client.Indices.Create(indexName, client.Indices.Create.WithContext(ctx))
 	if err != nil {
 		return errCannotCreateIndex
 	}

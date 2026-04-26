@@ -24,5 +24,5 @@ func TestHeaderToMapRequestHeader(t *testing.T) {
 
 	result := HeaderToMap(&reqHeader)
 
-	assert.Equal(t, "Bearer token", result["Authorization"])
+	assert.Equal(t, RedactedValue, result["Authorization"])
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/christiandoxa/welog/pkg/model"
 	"github.com/christiandoxa/welog/pkg/util"
 	"github.com/gin-gonic/gin"
-	"github.com/goccy/go-json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -24,13 +23,55 @@ var setenv = os.Setenv
 // responseBodyWriter is a custom response writer that captures the response body.
 type responseBodyWriter struct {
 	gin.ResponseWriter
-	body *bytes.Buffer
+	body *responseBodyCapture
 }
 
 // Write writes the response body to both the underlying ResponseWriter and the buffer.
 func (w responseBodyWriter) Write(b []byte) (int, error) {
-	w.body.Write(b)
+	_, _ = w.body.Write(b)
 	return w.ResponseWriter.Write(b)
+}
+
+func (w responseBodyWriter) WriteString(s string) (int, error) {
+	_, _ = w.body.WriteString(s)
+	return w.ResponseWriter.WriteString(s)
+}
+
+type responseBodyCapture struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func newResponseBodyCapture() *responseBodyCapture {
+	return &responseBodyCapture{limit: util.DefaultMaxLoggedBodyBytes}
+}
+
+func (b *responseBodyCapture) Write(p []byte) (int, error) {
+	originalLen := len(p)
+	remaining := b.limit + 1 - b.buf.Len()
+	if remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+		_, _ = b.buf.Write(p)
+	}
+	return originalLen, nil
+}
+
+func (b *responseBodyCapture) WriteString(s string) (int, error) {
+	originalLen := len(s)
+	remaining := b.limit + 1 - b.buf.Len()
+	if remaining > 0 {
+		if len(s) > remaining {
+			s = s[:remaining]
+		}
+		_, _ = b.buf.WriteString(s)
+	}
+	return originalLen, nil
+}
+
+func (b *responseBodyCapture) Bytes() []byte {
+	return b.buf.Bytes()
 }
 
 func SetConfig(config Config) {
@@ -93,36 +134,31 @@ func logFiber(c *fiber.Ctx, requestTime time.Time) {
 	// Get the current user; if not available, set as "unknown".
 	currentUser, err := user.Current()
 	if err != nil {
-		c.Locals(generalkey.Logger).(*logrus.Entry).Error(err)
+		fiberLogger(c).Error(err)
 		currentUser = &user.User{Username: "unknown"}
 	}
 
-	var request, response logrus.Fields
-	if err = json.Unmarshal(c.Body(), &request); err != nil {
-		logger.Logger().Error(err)
-	}
-	if err = json.Unmarshal(c.Response().Body(), &response); err != nil {
-		logger.Logger().Error(err)
-	}
+	request, requestBodyString := util.BuildBodyLogFields(c.Body())
+	response, responseBodyString := util.BuildBodyLogFields(c.Response().Body())
 
-	clientLog := c.Locals(generalkey.ClientLog).([]logrus.Fields)
+	clientLog := fiberClientLog(c)
 
 	// Log various details of the request and response.
-	c.Locals(generalkey.Logger).(*logrus.Entry).WithFields(logrus.Fields{
+	fiberLogger(c).WithFields(logrus.Fields{
 		"requestAgent":       c.Get("User-Agent"),
 		"requestBody":        request,
-		"requestBodyString":  string(c.Body()),
+		"requestBodyString":  requestBodyString,
 		"requestContentType": c.Get("Content-Type"),
-		"requestHeader":      c.GetReqHeaders(),
+		"requestHeader":      util.SanitizeStringSliceMap(c.GetReqHeaders()),
 		"requestHostName":    c.Hostname(),
 		"requestId":          c.Locals(generalkey.RequestID),
 		"requestIp":          c.IP(),
 		"requestMethod":      c.Method(),
 		"requestProtocol":    c.Protocol(),
 		"requestTimestamp":   requestTime.Format(time.RFC3339Nano),
-		"requestUrl":         c.BaseURL() + c.OriginalURL(),
+		"requestUrl":         util.SanitizeURL(c.BaseURL() + c.OriginalURL()),
 		"responseBody":       response,
-		"responseBodyString": string(c.Response().Body()),
+		"responseBodyString": responseBodyString,
 		"responseHeader":     util.HeaderToMap(&c.Response().Header),
 		"responseLatency":    latency.String(),
 		"responseStatus":     c.Response().StatusCode(),
@@ -140,7 +176,7 @@ func LogFiberClient(
 ) {
 	logData := util.BuildTargetLogFields(req, res)
 
-	clientLog := c.Locals(generalkey.ClientLog).([]logrus.Fields)
+	clientLog := fiberClientLog(c)
 	c.Locals(generalkey.ClientLog, append(clientLog, logData))
 }
 
@@ -162,7 +198,7 @@ func NewGin() gin.HandlerFunc {
 		c.Set(generalkey.ClientLog, []logrus.Fields{})
 
 		// Create a response writer that captures the response body.
-		bodyBuf := &bytes.Buffer{}
+		bodyBuf := newResponseBodyCapture()
 		writer := responseBodyWriter{body: bodyBuf, ResponseWriter: c.Writer}
 		c.Writer = writer
 
@@ -177,56 +213,58 @@ func NewGin() gin.HandlerFunc {
 }
 
 // logGin logs the details of the Gin request and response.
-func logGin(c *gin.Context, buf *bytes.Buffer, requestTime time.Time) {
+func logGin(c *gin.Context, buf *responseBodyCapture, requestTime time.Time) {
 	latency := time.Since(requestTime)
 
 	currentUser, err := user.Current()
 	if err != nil {
 		logger.Logger().Error(err)
 	}
+	responseUser := "unknown"
+	if currentUser != nil {
+		responseUser = currentUser.Username
+	}
 
-	var request, response logrus.Fields
-	bodyBytes, err := io.ReadAll(c.Request.Body)
+	bodyBytes, err := readBodyForLog(c.Request.Body)
 	if err != nil {
 		logger.Logger().Error(err)
 	}
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	if err = json.Unmarshal(bodyBytes, &request); err != nil {
-		logger.Logger().Error(err)
-	}
+	request, requestBodyString := util.BuildBodyLogFields(bodyBytes)
 
 	responseBody := buf.Bytes()
-	if err = json.Unmarshal(responseBody, &response); err != nil {
-		logger.Logger().Error(err)
-	}
+	response, responseBodyString := util.BuildBodyLogFields(responseBody)
 
 	clientLog, _ := c.Get(generalkey.ClientLog)
-	clientLogFields := clientLog.([]logrus.Fields)
+	clientLogFields, _ := clientLog.([]logrus.Fields)
 
 	log, _ := c.Get(generalkey.Logger)
-	entry := log.(*logrus.Entry)
+	entry, _ := log.(*logrus.Entry)
+	if entry == nil {
+		entry = logger.Logger().WithField(generalkey.RequestID, c.GetString(generalkey.RequestID))
+	}
 
 	// Log various details of the request and response.
 	entry.WithFields(logrus.Fields{
 		"requestAgent":       c.GetHeader("User-Agent"),
 		"requestBody":        request,
-		"requestBodyString":  string(bodyBytes),
+		"requestBodyString":  requestBodyString,
 		"requestContentType": c.GetHeader("Content-Type"),
-		"requestHeader":      c.Request.Header,
+		"requestHeader":      util.SanitizeHTTPHeader(c.Request.Header),
 		"requestHostName":    c.Request.Host,
 		"requestId":          c.GetString(generalkey.RequestID),
 		"requestIp":          c.ClientIP(),
 		"requestMethod":      c.Request.Method,
 		"requestProtocol":    c.Request.Proto,
 		"requestTimestamp":   requestTime.Format(time.RFC3339Nano),
-		"requestUrl":         c.Request.RequestURI,
+		"requestUrl":         util.SanitizeURL(c.Request.RequestURI),
 		"responseBody":       response,
-		"responseBodyString": string(responseBody),
-		"responseHeader":     c.Writer.Header(),
+		"responseBodyString": responseBodyString,
+		"responseHeader":     util.SanitizeHTTPHeader(c.Writer.Header()),
 		"responseLatency":    latency.String(),
 		"responseStatus":     c.Writer.Status(),
 		"responseTimestamp":  requestTime.Add(latency).Format(time.RFC3339Nano),
-		"responseUser":       currentUser.Username,
+		"responseUser":       responseUser,
 		"target":             clientLogFields,
 	}).Info()
 }
@@ -244,6 +282,27 @@ func LogGinClient(
 		clientLog = []logrus.Fields{}
 	}
 
-	clientLog = append(clientLog.([]logrus.Fields), logData)
-	c.Set(generalkey.ClientLog, clientLog)
+	clientLogFields, _ := clientLog.([]logrus.Fields)
+	c.Set(generalkey.ClientLog, append(clientLogFields, logData))
+}
+
+func fiberLogger(c *fiber.Ctx) *logrus.Entry {
+	if entry, ok := c.Locals(generalkey.Logger).(*logrus.Entry); ok {
+		return entry
+	}
+	return logger.Logger().WithField(generalkey.RequestID, c.Locals(generalkey.RequestID))
+}
+
+func fiberClientLog(c *fiber.Ctx) []logrus.Fields {
+	if clientLog, ok := c.Locals(generalkey.ClientLog).([]logrus.Fields); ok {
+		return clientLog
+	}
+	return []logrus.Fields{}
+}
+
+func readBodyForLog(r io.Reader) ([]byte, error) {
+	if r == nil {
+		return nil, nil
+	}
+	return io.ReadAll(io.LimitReader(r, util.DefaultMaxLoggedBodyBytes+1))
 }

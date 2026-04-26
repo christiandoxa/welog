@@ -63,3 +63,36 @@ func TestBuildTargetLogFieldsInvalidJSON(t *testing.T) {
 	assert.Equal(t, "{", fields["targetResponseBodyString"])
 	assert.Equal(t, reqTime.Add(2*time.Second).Format(time.RFC3339Nano), fields["targetResponseTimestamp"])
 }
+
+func TestBuildTargetLogFieldsRedactsSensitiveData(t *testing.T) {
+	reqTime := time.Date(2024, 3, 4, 5, 6, 7, 0, time.UTC)
+	req := model.TargetRequest{
+		URL: "https://example.com/api?token=secret&keep=value",
+		Header: map[string]interface{}{
+			"Authorization": "Bearer secret",
+			"Content-Type":  "application/json",
+		},
+		Body:      []byte(`{"password":"secret","nested":{"api_key":"abc"},"name":"welog"}`),
+		Timestamp: reqTime,
+	}
+	res := model.TargetResponse{
+		Header: map[string]interface{}{"Set-Cookie": "sid=secret"},
+		Body:   []byte(`{"access_token":"abc","ok":true}`),
+	}
+
+	fields := BuildTargetLogFields(req, res)
+
+	requestBody := fields["targetRequestBody"].(logrus.Fields)
+	assert.Equal(t, RedactedValue, requestBody["password"])
+	assert.NotContains(t, fields["targetRequestBodyString"], "secret")
+	assert.Contains(t, fields["targetRequestBodyString"], RedactedValue)
+
+	requestHeader := fields["targetRequestHeader"].(map[string]interface{})
+	assert.Equal(t, RedactedValue, requestHeader["Authorization"])
+	assert.Equal(t, "application/json", requestHeader["Content-Type"])
+	assert.Equal(t, "https://example.com/api?keep=value&token=%5BREDACTED%5D", fields["targetRequestURL"])
+
+	responseHeader := fields["targetResponseHeader"].(map[string]interface{})
+	assert.Equal(t, RedactedValue, responseHeader["Set-Cookie"])
+	assert.NotContains(t, fields["targetResponseBodyString"], "abc")
+}

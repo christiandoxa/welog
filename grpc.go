@@ -241,15 +241,10 @@ func marshalPayload(value interface{}) (logrus.Fields, string) {
 
 	if err != nil {
 		logger.Logger().Error(err)
-		return logrus.Fields{}, fmt.Sprint(value)
+		return logrus.Fields{}, util.SanitizeRawString(fmt.Sprint(value))
 	}
 
-	var fields logrus.Fields
-	if err = json.Unmarshal(raw, &fields); err != nil {
-		logger.Logger().Error(err)
-	}
-
-	return fields, string(raw)
+	return util.BuildBodyLogFields(raw)
 }
 
 func metadataToMap(ctx context.Context) map[string]interface{} {
@@ -258,16 +253,7 @@ func metadataToMap(ctx context.Context) map[string]interface{} {
 		return map[string]interface{}{}
 	}
 
-	result := make(map[string]interface{}, len(md))
-	for key, vals := range md {
-		if len(vals) == 1 {
-			result[key] = vals[0]
-			continue
-		}
-		result[key] = vals
-	}
-
-	return result
+	return util.SanitizeStringSliceMap(map[string][]string(md))
 }
 
 func peerAddress(ctx context.Context) string {

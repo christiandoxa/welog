@@ -38,6 +38,7 @@ var (
 	}
 	tickerFactory = time.NewTicker
 	monitorStop   <-chan struct{}
+	monitorDone   <-chan struct{}
 	closeFile     = func(f *os.File) error { return f.Close() }
 )
 
@@ -83,7 +84,10 @@ func logger() *logrus.Logger {
 			Timeout:   5 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
 	}
 
 	c, err := newESClient(elasticsearch.Config{
@@ -138,12 +142,16 @@ func logger() *logrus.Logger {
 // This ensures that even if the ElasticSearch instance is restarted, the application
 // will continue to log to ElasticSearch once the connection is re-established.
 func monitorConnection() {
+	monitorConnectionWithStop(monitorStop)
+}
+
+func monitorConnectionWithStop(stop <-chan struct{}) {
 	ticker := tickerFactory(10 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-		case <-monitorStop:
+		case <-stop:
 			return
 		}
 		mutex.Lock()
@@ -177,7 +185,10 @@ func reinitializeLogger(log *logrus.Logger) {
 			Timeout:   5 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
 	}
 
 	c, err := newESClient(elasticsearch.Config{
@@ -206,6 +217,7 @@ func reinitializeLogger(log *logrus.Logger) {
 	}(res.Body)
 
 	client = c
+	stopAsyncHooks(log.Hooks)
 	log.ReplaceHooks(make(logrus.LevelHooks))
 
 	parsedURL, err := url.Parse(elasticURL)
@@ -231,7 +243,13 @@ func Logger() *logrus.Logger {
 		mutex.Lock()
 		defer mutex.Unlock()
 		instance = logger()
-		go monitorConnection()
+		stop := monitorStop
+		done := make(chan struct{})
+		monitorDone = done
+		go func() {
+			defer close(done)
+			monitorConnectionWithStop(stop)
+		}()
 	})
 
 	mutex.Lock()
@@ -242,8 +260,11 @@ func Logger() *logrus.Logger {
 // asyncHook wraps a logrus.Hook and processes Fire calls asynchronously using a buffered channel.
 // This prevents request logging from blocking when Elasticsearch is slow or unavailable.
 type asyncHook struct {
-	hook  logrus.Hook
-	queue chan *logrus.Entry
+	hook      logrus.Hook
+	queue     chan *logrus.Entry
+	closeOnce sync.Once
+	mu        sync.RWMutex
+	closed    bool
 }
 
 func newAsyncHook(hook logrus.Hook) *asyncHook {
@@ -261,6 +282,11 @@ func (h *asyncHook) Levels() []logrus.Level {
 
 func (h *asyncHook) Fire(entry *logrus.Entry) error {
 	entryCopy := duplicateEntry(entry)
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.closed {
+		return nil
+	}
 	select {
 	case h.queue <- entryCopy:
 	default:
@@ -269,10 +295,36 @@ func (h *asyncHook) Fire(entry *logrus.Entry) error {
 	return nil
 }
 
+func (h *asyncHook) Close() {
+	h.closeOnce.Do(func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.closed = true
+		close(h.queue)
+	})
+}
+
 func (h *asyncHook) worker() {
 	for e := range h.queue {
 		if err := h.hook.Fire(e); err != nil {
 			writeFallbackLog(e, err)
+		}
+	}
+}
+
+func stopAsyncHooks(hooks logrus.LevelHooks) {
+	seen := map[*asyncHook]struct{}{}
+	for _, levelHooks := range hooks {
+		for _, hook := range levelHooks {
+			async, ok := hook.(*asyncHook)
+			if !ok {
+				continue
+			}
+			if _, exists := seen[async]; exists {
+				continue
+			}
+			async.Close()
+			seen[async] = struct{}{}
 		}
 	}
 }

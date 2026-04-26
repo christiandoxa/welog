@@ -12,13 +12,23 @@ func HeaderToMap(header interface{}) map[string]interface{} {
 
 	case *fasthttp.ResponseHeader:
 		h.All()(func(key, value []byte) bool {
-			headersMap[string(key)] = string(value)
+			headerKey := string(key)
+			if IsSensitiveKey(headerKey) {
+				headersMap[headerKey] = RedactedValue
+				return true
+			}
+			headersMap[headerKey] = string(value)
 			return true
 		})
 
 	case *fasthttp.RequestHeader:
 		h.All()(func(key, value []byte) bool {
-			headersMap[string(key)] = string(value)
+			headerKey := string(key)
+			if IsSensitiveKey(headerKey) {
+				headersMap[headerKey] = RedactedValue
+				return true
+			}
+			headersMap[headerKey] = string(value)
 			return true
 		})
 

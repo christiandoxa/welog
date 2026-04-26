@@ -212,7 +212,7 @@ func TestLogGin(t *testing.T) {
 	c.Set(generalkey.ClientLog, []logrus.Fields{})
 
 	// Capture the response body using a custom response writer.
-	bodyBuf := &bytes.Buffer{}
+	bodyBuf := newResponseBodyCapture()
 	c.Writer = &responseBodyWriter{body: bodyBuf, ResponseWriter: c.Writer}
 
 	// Log the request and response.
@@ -379,7 +379,8 @@ func TestLogGinErrorPaths(t *testing.T) {
 	c.Set(generalkey.Logger, logrus.New().WithField(generalkey.RequestID, "rid"))
 	c.Set(generalkey.ClientLog, []logrus.Fields{})
 
-	buf := bytes.NewBufferString("{")
+	buf := newResponseBodyCapture()
+	_, _ = buf.WriteString("{")
 	logGin(c, buf, time.Now())
 }
 

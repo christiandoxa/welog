@@ -161,6 +161,22 @@ func TestAsyncHookFireDropsWhenFull(t *testing.T) {
 	require.NoError(t, async.Fire(entry))
 }
 
+func TestAsyncHookCloseStopsFutureFire(t *testing.T) {
+	h := &stubHook{entries: make(chan *logrus.Entry, 1)}
+	async := newAsyncHook(h)
+	async.Close()
+
+	entry := logrus.NewEntry(logrus.New())
+	entry.Message = "after close"
+	require.NoError(t, async.Fire(entry))
+
+	select {
+	case got := <-h.entries:
+		t.Fatalf("closed async hook fired entry %q", got.Message)
+	default:
+	}
+}
+
 func TestCopyBufferAndDuplicateEntry(t *testing.T) {
 	original := bytes.NewBufferString("payload")
 	cloned := copyBuffer(original)
@@ -600,6 +616,20 @@ func TestLoggerSingleton(t *testing.T) {
 	once = sync.Once{}
 	instance = nil
 	client = nil
+	stopCh := make(chan struct{})
+	monitorStop = stopCh
+	defer func() {
+		close(stopCh)
+		if monitorDone != nil {
+			select {
+			case <-monitorDone:
+			case <-time.After(time.Second):
+				t.Fatalf("monitorConnection did not exit")
+			}
+		}
+		monitorStop = nil
+		monitorDone = nil
+	}()
 
 	t.Setenv(envkey.ElasticURL, "")
 

@@ -30,7 +30,7 @@ func TestNewGRPCUnary(t *testing.T) {
 	log.SetFormatter(&logrus.JSONFormatter{DisableTimestamp: true})
 	log.Out = buf
 
-	ctx := context.WithValue(context.Background(), generalkey.Logger, logrus.NewEntry(log))
+	ctx := context.WithValue(context.Background(), grpcLoggerContextKey, logrus.NewEntry(log))
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(strings.ToLower(generalkey.RequestIDHeader), "grpc-test-id"))
 
 	interceptor := NewGRPCUnary()
@@ -106,7 +106,7 @@ func TestNewGRPCStream(t *testing.T) {
 	log.SetFormatter(&logrus.JSONFormatter{DisableTimestamp: true})
 	log.Out = buf
 
-	ctx := context.WithValue(context.Background(), generalkey.Logger, logrus.NewEntry(log))
+	ctx := context.WithValue(context.Background(), grpcLoggerContextKey, logrus.NewEntry(log))
 	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(strings.ToLower(generalkey.RequestIDHeader), "stream-id"))
 
 	stream := &testServerStream{ctx: ctx}
@@ -154,7 +154,7 @@ type badUnmarshalJSON struct{}
 func (badUnmarshalJSON) MarshalJSON() ([]byte, error) { return []byte("[]"), nil }
 
 func TestFetchRequestIDFromContextValue(t *testing.T) {
-	ctx := context.WithValue(context.Background(), generalkey.RequestID, "ctx-id")
+	ctx := context.WithValue(context.Background(), grpcRequestIDContextKey, "ctx-id")
 	assert.Equal(t, "ctx-id", fetchRequestID(ctx))
 }
 
@@ -185,7 +185,7 @@ func TestFetchRequestIDGeneratesNew(t *testing.T) {
 func TestFetchLoggerUsesExisting(t *testing.T) {
 	base := logrus.New()
 	entry := logrus.NewEntry(base)
-	ctx := context.WithValue(context.Background(), generalkey.Logger, entry)
+	ctx := context.WithValue(context.Background(), grpcLoggerContextKey, entry)
 
 	got := fetchLogger(ctx, "rid")
 	require.NotNil(t, got)
@@ -200,7 +200,7 @@ func TestFetchLoggerDefault(t *testing.T) {
 
 func TestFetchClientLogCopiesSlice(t *testing.T) {
 	original := []logrus.Fields{{"key": "value"}}
-	ctx := context.WithValue(context.Background(), generalkey.ClientLog, original)
+	ctx := context.WithValue(context.Background(), grpcClientLogContextKey, original)
 	got := fetchClientLog(ctx)
 	require.NotNil(t, got)
 	assert.Equal(t, original, *got)
@@ -209,7 +209,7 @@ func TestFetchClientLogCopiesSlice(t *testing.T) {
 
 func TestFetchClientLogPointer(t *testing.T) {
 	original := []logrus.Fields{{"key": "value"}}
-	ctx := context.WithValue(context.Background(), generalkey.ClientLog, &original)
+	ctx := context.WithValue(context.Background(), grpcClientLogContextKey, &original)
 	got := fetchClientLog(ctx)
 	require.NotNil(t, got)
 	assert.Equal(t, original, *got)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/christiandoxa/welog/internal/entity"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
 	"github.com/christiandoxa/welog/pkg/model"
@@ -24,6 +25,14 @@ import (
 )
 
 const requestIDMetadataKey = "x-request-id"
+
+type grpcContextKey string
+
+const (
+	grpcRequestIDContextKey grpcContextKey = generalkey.RequestID
+	grpcLoggerContextKey    grpcContextKey = generalkey.Logger
+	grpcClientLogContextKey grpcContextKey = generalkey.ClientLog
+)
 
 // NewGRPCUnary returns a grpc.UnaryServerInterceptor that injects Welog context
 // and logs request/response data.
@@ -67,10 +76,9 @@ func NewGRPCStream() grpc.StreamServerInterceptor {
 
 // LogGRPCClient appends outbound call logs to the request-scoped slice.
 func LogGRPCClient(ctx context.Context, req model.TargetRequest, res model.TargetResponse) {
-	logData := util.BuildTargetLogFields(req, res)
+	logData := requestLogUseCase.TargetFields(req, res)
 
-	switch stored := ctx.Value(generalkey.ClientLog).(type) {
-	case *[]logrus.Fields:
+	if stored, ok := clientLogFromContext(ctx); ok {
 		*stored = append(*stored, logData)
 	}
 
@@ -82,9 +90,9 @@ func prepareGRPCContext(ctx context.Context) (context.Context, *logrus.Entry, st
 	entry := fetchLogger(ctx, requestID)
 	clientLog := fetchClientLog(ctx)
 
-	ctx = context.WithValue(ctx, generalkey.RequestID, requestID)
-	ctx = context.WithValue(ctx, generalkey.Logger, entry)
-	ctx = context.WithValue(ctx, generalkey.ClientLog, clientLog)
+	ctx = context.WithValue(ctx, grpcRequestIDContextKey, requestID)
+	ctx = context.WithValue(ctx, grpcLoggerContextKey, entry)
+	ctx = context.WithValue(ctx, grpcClientLogContextKey, clientLog)
 
 	_ = grpc.SetHeader(ctx, metadata.Pairs(requestIDMetadataKey, requestID))
 
@@ -93,7 +101,7 @@ func prepareGRPCContext(ctx context.Context) (context.Context, *logrus.Entry, st
 
 func fetchRequestID(ctx context.Context) string {
 	if ctx != nil {
-		if val := ctx.Value(generalkey.RequestID); val != nil {
+		if val := contextValue(ctx, grpcRequestIDContextKey, generalkey.RequestID); val != nil {
 			if id, ok := val.(string); ok && id != "" {
 				return id
 			}
@@ -110,7 +118,7 @@ func fetchRequestID(ctx context.Context) string {
 }
 
 func fetchLogger(ctx context.Context, requestID string) *logrus.Entry {
-	if existing := ctx.Value(generalkey.Logger); existing != nil {
+	if existing := contextValue(ctx, grpcLoggerContextKey, generalkey.Logger); existing != nil {
 		if entry, ok := existing.(*logrus.Entry); ok {
 			return entry.WithField(generalkey.RequestID, requestID)
 		}
@@ -120,18 +128,35 @@ func fetchLogger(ctx context.Context, requestID string) *logrus.Entry {
 }
 
 func fetchClientLog(ctx context.Context) *[]logrus.Fields {
-	if existing := ctx.Value(generalkey.ClientLog); existing != nil {
-		switch v := existing.(type) {
-		case *[]logrus.Fields:
-			return v
-		case []logrus.Fields:
-			copyStored := append([]logrus.Fields{}, v...)
-			return &copyStored
-		}
+	if clientLog, ok := clientLogFromContext(ctx); ok {
+		return clientLog
 	}
 
 	var entries []logrus.Fields
 	return &entries
+}
+
+func clientLogFromContext(ctx context.Context) (*[]logrus.Fields, bool) {
+	existing := contextValue(ctx, grpcClientLogContextKey, generalkey.ClientLog)
+	switch v := existing.(type) {
+	case *[]logrus.Fields:
+		return v, true
+	case []logrus.Fields:
+		copyStored := append([]logrus.Fields{}, v...)
+		return &copyStored, true
+	default:
+		return nil, false
+	}
+}
+
+func contextValue(ctx context.Context, key grpcContextKey, legacyKey string) any {
+	if ctx == nil {
+		return nil
+	}
+	if value := ctx.Value(key); value != nil {
+		return value
+	}
+	return ctx.Value(legacyKey)
 }
 
 type grpcUnaryLogContext struct {
@@ -162,23 +187,20 @@ func logGRPCUnary(p grpcUnaryLogContext) {
 		errorMessage = p.err.Error()
 	}
 
-	p.entry.WithFields(logrus.Fields{
-		"grpcMethod":         p.info.FullMethod,
-		"grpcRequest":        requestBody,
-		"grpcRequestString":  requestBodyString,
-		"grpcRequestMeta":    md,
-		"grpcPeer":           peerAddr,
-		"grpcStatusCode":     code.String(),
-		"grpcError":          errorMessage,
-		"grpcResponse":       responseBody,
-		"grpcResponseString": responseBodyString,
-		"requestId":          p.requestID,
-		"requestTimestamp":   p.start.Format(time.RFC3339Nano),
-		"responseTimestamp":  p.start.Add(latency).Format(time.RFC3339Nano),
-		"responseLatency":    latency.String(),
-		"responseUser":       currentUser,
-		"target":             readClientLog(p.clientLog),
-	}).Info()
+	p.entry.WithFields(requestLogUseCase.GRPCUnaryFields(entity.GRPCUnaryLogEvent{
+		Method:           p.info.FullMethod,
+		Request:          entity.Payload{Fields: requestBody, String: requestBodyString},
+		RequestMeta:      md,
+		Peer:             peerAddr,
+		StatusCode:       code.String(),
+		Error:            errorMessage,
+		Response:         entity.Payload{Fields: responseBody, String: responseBodyString},
+		RequestID:        p.requestID,
+		RequestTimestamp: p.start,
+		ResponseLatency:  latency,
+		ResponseUser:     currentUser,
+		Target:           readClientLog(p.clientLog),
+	})).Info()
 }
 
 func logGRPCStream(
@@ -202,21 +224,20 @@ func logGRPCStream(
 		errorMessage = err.Error()
 	}
 
-	entry.WithFields(logrus.Fields{
-		"grpcMethod":         info.FullMethod,
-		"grpcRequestMeta":    md,
-		"grpcPeer":           peerAddr,
-		"grpcStatusCode":     code.String(),
-		"grpcError":          errorMessage,
-		"grpcIsClientStream": info.IsClientStream,
-		"grpcIsServerStream": info.IsServerStream,
-		"requestId":          requestID,
-		"requestTimestamp":   start.Format(time.RFC3339Nano),
-		"responseTimestamp":  start.Add(latency).Format(time.RFC3339Nano),
-		"responseLatency":    latency.String(),
-		"responseUser":       currentUser,
-		"target":             readClientLog(clientLog),
-	}).Info()
+	entry.WithFields(requestLogUseCase.GRPCStreamFields(entity.GRPCStreamLogEvent{
+		Method:           info.FullMethod,
+		RequestMeta:      md,
+		Peer:             peerAddr,
+		StatusCode:       code.String(),
+		Error:            errorMessage,
+		IsClientStream:   info.IsClientStream,
+		IsServerStream:   info.IsServerStream,
+		RequestID:        requestID,
+		RequestTimestamp: start,
+		ResponseLatency:  latency,
+		ResponseUser:     currentUser,
+		Target:           readClientLog(clientLog),
+	})).Info()
 }
 
 func marshalPayload(value interface{}) (logrus.Fields, string) {

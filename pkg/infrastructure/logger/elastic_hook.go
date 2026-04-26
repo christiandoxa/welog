@@ -59,10 +59,12 @@ func NewElasticHookWithFunc(client *elasticsearch.Client, host string, level log
 	}, nil
 }
 
+// Levels returns the logrus levels handled by this hook.
 func (hook *ElasticHook) Levels() []logrus.Level {
 	return hook.levels
 }
 
+// Fire writes a log entry to Elasticsearch.
 func (hook *ElasticHook) Fire(entry *logrus.Entry) error {
 	data, err := json.Marshal(hook.createMessage(entry))
 	if err != nil {

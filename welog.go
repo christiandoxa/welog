@@ -7,6 +7,8 @@ import (
 	"os/user"
 	"time"
 
+	"github.com/christiandoxa/welog/internal/entity"
+	"github.com/christiandoxa/welog/internal/usecase"
 	"github.com/christiandoxa/welog/pkg/constant/envkey"
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
@@ -19,6 +21,7 @@ import (
 )
 
 var setenv = os.Setenv
+var requestLogUseCase = usecase.NewRequestLogUseCase()
 
 // responseBodyWriter is a custom response writer that captures the response body.
 type responseBodyWriter struct {
@@ -74,6 +77,7 @@ func (b *responseBodyCapture) Bytes() []byte {
 	return b.buf.Bytes()
 }
 
+// SetConfig stores the Welog Elasticsearch configuration in environment variables.
 func SetConfig(config Config) {
 	if err := setenv(envkey.ElasticIndex, config.ElasticIndex); err != nil {
 		logger.Logger().Error(err)
@@ -132,40 +136,28 @@ func logFiber(c *fiber.Ctx, requestTime time.Time) {
 	latency := time.Since(requestTime)
 
 	// Get the current user; if not available, set as "unknown".
-	currentUser, err := user.Current()
-	if err != nil {
-		fiberLogger(c).Error(err)
-		currentUser = &user.User{Username: "unknown"}
-	}
+	entry := fiberLogger(c)
+	responseUser := currentUsername(func(err error) { entry.Error(err) })
 
-	request, requestBodyString := util.BuildBodyLogFields(c.Body())
-	response, responseBodyString := util.BuildBodyLogFields(c.Response().Body())
-
-	clientLog := fiberClientLog(c)
-
-	// Log various details of the request and response.
-	fiberLogger(c).WithFields(logrus.Fields{
-		"requestAgent":       c.Get("User-Agent"),
-		"requestBody":        request,
-		"requestBodyString":  requestBodyString,
-		"requestContentType": c.Get("Content-Type"),
-		"requestHeader":      util.SanitizeStringSliceMap(c.GetReqHeaders()),
-		"requestHostName":    c.Hostname(),
-		"requestId":          c.Locals(generalkey.RequestID),
-		"requestIp":          c.IP(),
-		"requestMethod":      c.Method(),
-		"requestProtocol":    c.Protocol(),
-		"requestTimestamp":   requestTime.Format(time.RFC3339Nano),
-		"requestUrl":         util.SanitizeURL(c.BaseURL() + c.OriginalURL()),
-		"responseBody":       response,
-		"responseBodyString": responseBodyString,
-		"responseHeader":     util.HeaderToMap(&c.Response().Header),
-		"responseLatency":    latency.String(),
-		"responseStatus":     c.Response().StatusCode(),
-		"responseTimestamp":  requestTime.Add(latency).Format(time.RFC3339Nano),
-		"responseUser":       currentUser.Username,
-		"target":             clientLog,
-	}).Info()
+	entry.WithFields(requestLogUseCase.HTTPFields(entity.HTTPLogEvent{
+		RequestAgent:       c.Get("User-Agent"),
+		RequestBody:        requestLogUseCase.Payload(c.Body()),
+		RequestContentType: c.Get("Content-Type"),
+		RequestHeader:      util.SanitizeStringSliceMap(c.GetReqHeaders()),
+		RequestHostName:    c.Hostname(),
+		RequestID:          c.Locals(generalkey.RequestID),
+		RequestIP:          c.IP(),
+		RequestMethod:      c.Method(),
+		RequestProtocol:    c.Protocol(),
+		RequestTimestamp:   requestTime,
+		RequestURL:         util.SanitizeURL(c.BaseURL() + c.OriginalURL()),
+		ResponseBody:       requestLogUseCase.Payload(c.Response().Body()),
+		ResponseHeader:     util.HeaderToMap(&c.Response().Header),
+		ResponseLatency:    latency,
+		ResponseStatus:     c.Response().StatusCode(),
+		ResponseUser:       responseUser,
+		Target:             fiberClientLog(c),
+	})).Info()
 }
 
 // LogFiberClient logs a custom client request and response for Fiber.
@@ -174,7 +166,7 @@ func LogFiberClient(
 	req model.TargetRequest,
 	res model.TargetResponse,
 ) {
-	logData := util.BuildTargetLogFields(req, res)
+	logData := requestLogUseCase.TargetFields(req, res)
 
 	clientLog := fiberClientLog(c)
 	c.Locals(generalkey.ClientLog, append(clientLog, logData))
@@ -216,24 +208,13 @@ func NewGin() gin.HandlerFunc {
 func logGin(c *gin.Context, buf *responseBodyCapture, requestTime time.Time) {
 	latency := time.Since(requestTime)
 
-	currentUser, err := user.Current()
-	if err != nil {
-		logger.Logger().Error(err)
-	}
-	responseUser := "unknown"
-	if currentUser != nil {
-		responseUser = currentUser.Username
-	}
-
 	bodyBytes, err := readBodyForLog(c.Request.Body)
 	if err != nil {
 		logger.Logger().Error(err)
 	}
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	request, requestBodyString := util.BuildBodyLogFields(bodyBytes)
 
 	responseBody := buf.Bytes()
-	response, responseBodyString := util.BuildBodyLogFields(responseBody)
 
 	clientLog, _ := c.Get(generalkey.ClientLog)
 	clientLogFields, _ := clientLog.([]logrus.Fields)
@@ -243,30 +224,27 @@ func logGin(c *gin.Context, buf *responseBodyCapture, requestTime time.Time) {
 	if entry == nil {
 		entry = logger.Logger().WithField(generalkey.RequestID, c.GetString(generalkey.RequestID))
 	}
+	responseUser := currentUsername(func(err error) { logger.Logger().Error(err) })
 
-	// Log various details of the request and response.
-	entry.WithFields(logrus.Fields{
-		"requestAgent":       c.GetHeader("User-Agent"),
-		"requestBody":        request,
-		"requestBodyString":  requestBodyString,
-		"requestContentType": c.GetHeader("Content-Type"),
-		"requestHeader":      util.SanitizeHTTPHeader(c.Request.Header),
-		"requestHostName":    c.Request.Host,
-		"requestId":          c.GetString(generalkey.RequestID),
-		"requestIp":          c.ClientIP(),
-		"requestMethod":      c.Request.Method,
-		"requestProtocol":    c.Request.Proto,
-		"requestTimestamp":   requestTime.Format(time.RFC3339Nano),
-		"requestUrl":         util.SanitizeURL(c.Request.RequestURI),
-		"responseBody":       response,
-		"responseBodyString": responseBodyString,
-		"responseHeader":     util.SanitizeHTTPHeader(c.Writer.Header()),
-		"responseLatency":    latency.String(),
-		"responseStatus":     c.Writer.Status(),
-		"responseTimestamp":  requestTime.Add(latency).Format(time.RFC3339Nano),
-		"responseUser":       responseUser,
-		"target":             clientLogFields,
-	}).Info()
+	entry.WithFields(requestLogUseCase.HTTPFields(entity.HTTPLogEvent{
+		RequestAgent:       c.GetHeader("User-Agent"),
+		RequestBody:        requestLogUseCase.Payload(bodyBytes),
+		RequestContentType: c.GetHeader("Content-Type"),
+		RequestHeader:      util.SanitizeHTTPHeader(c.Request.Header),
+		RequestHostName:    c.Request.Host,
+		RequestID:          c.GetString(generalkey.RequestID),
+		RequestIP:          c.ClientIP(),
+		RequestMethod:      c.Request.Method,
+		RequestProtocol:    c.Request.Proto,
+		RequestTimestamp:   requestTime,
+		RequestURL:         util.SanitizeURL(c.Request.RequestURI),
+		ResponseBody:       requestLogUseCase.Payload(responseBody),
+		ResponseHeader:     util.SanitizeHTTPHeader(c.Writer.Header()),
+		ResponseLatency:    latency,
+		ResponseStatus:     c.Writer.Status(),
+		ResponseUser:       responseUser,
+		Target:             clientLogFields,
+	})).Info()
 }
 
 // LogGinClient logs a custom client request and response for Gin.
@@ -275,7 +253,7 @@ func LogGinClient(
 	req model.TargetRequest,
 	res model.TargetResponse,
 ) {
-	logData := util.BuildTargetLogFields(req, res)
+	logData := requestLogUseCase.TargetFields(req, res)
 
 	clientLog, exists := c.Get(generalkey.ClientLog)
 	if !exists {
@@ -305,4 +283,15 @@ func readBodyForLog(r io.Reader) ([]byte, error) {
 		return nil, nil
 	}
 	return io.ReadAll(io.LimitReader(r, util.DefaultMaxLoggedBodyBytes+1))
+}
+
+func currentUsername(onError func(error)) string {
+	currentUser, err := user.Current()
+	if err != nil || currentUser == nil {
+		if onError != nil {
+			onError(err)
+		}
+		return "unknown"
+	}
+	return currentUser.Username
 }

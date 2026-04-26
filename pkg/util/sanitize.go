@@ -13,8 +13,9 @@ import (
 const (
 	// DefaultMaxLoggedBodyBytes caps payload copies kept only for logging.
 	DefaultMaxLoggedBodyBytes = 64 * 1024
-	RedactedValue             = "[REDACTED]"
-	truncatedSuffix           = "...[truncated]"
+	// RedactedValue replaces sensitive values before logs leave the process.
+	RedactedValue   = "[REDACTED]"
+	truncatedSuffix = "...[truncated]"
 )
 
 var (
@@ -37,24 +38,70 @@ var (
 		"refreshtoken",
 		"idtoken",
 	}
+	defaultSensitiveKeyStrategy = fragmentSensitiveKeyStrategy{fragments: sensitiveKeyFragments}
+	defaultSanitizer            = NewSanitizer(DefaultMaxLoggedBodyBytes, defaultSensitiveKeyStrategy)
 )
+
+// SensitiveKeyStrategy decides which structured keys must be redacted.
+type SensitiveKeyStrategy interface {
+	IsSensitiveKey(key string) bool
+}
+
+type fragmentSensitiveKeyStrategy struct {
+	fragments []string
+}
+
+func (s fragmentSensitiveKeyStrategy) IsSensitiveKey(key string) bool {
+	normalized := normalizeKey(key)
+	for _, fragment := range s.fragments {
+		if strings.Contains(normalized, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+// Sanitizer applies the redaction strategy and payload size policy for logs.
+type Sanitizer struct {
+	maxBodyBytes int
+	keyStrategy  SensitiveKeyStrategy
+}
+
+// NewSanitizer creates a sanitizer with explicit body-size and key-matching strategies.
+func NewSanitizer(maxBodyBytes int, keyStrategy SensitiveKeyStrategy) Sanitizer {
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = DefaultMaxLoggedBodyBytes
+	}
+	if keyStrategy == nil {
+		keyStrategy = defaultSensitiveKeyStrategy
+	}
+	return Sanitizer{
+		maxBodyBytes: maxBodyBytes,
+		keyStrategy:  keyStrategy,
+	}
+}
 
 // BuildBodyLogFields returns a sanitized JSON object and bounded string form for logging.
 func BuildBodyLogFields(body []byte) (logrus.Fields, string) {
-	clipped, truncated := clipBytes(body)
+	return defaultSanitizer.BuildBodyLogFields(body)
+}
+
+// BuildBodyLogFields returns a sanitized JSON object and bounded string form for logging.
+func (s Sanitizer) BuildBodyLogFields(body []byte) (logrus.Fields, string) {
+	clipped, truncated := s.clipBytes(body)
 	if len(clipped) == 0 {
 		return logrus.Fields{}, ""
 	}
 
 	var decoded any
 	if err := json.Unmarshal(clipped, &decoded); err != nil {
-		return logrus.Fields{}, sanitizeRawBytes(clipped, truncated)
+		return logrus.Fields{}, s.sanitizeRawBytes(clipped, truncated)
 	}
 
-	sanitized := SanitizeValue(decoded)
+	sanitized := s.SanitizeValue(decoded)
 	bodyString, err := json.Marshal(sanitized)
 	if err != nil {
-		return logrus.Fields{}, sanitizeRawBytes(clipped, truncated)
+		return logrus.Fields{}, s.sanitizeRawBytes(clipped, truncated)
 	}
 
 	fields := logrus.Fields{}
@@ -73,15 +120,25 @@ func BuildBodyLogFields(body []byte) (logrus.Fields, string) {
 
 // SanitizeRawString caps and best-effort redacts unstructured payload strings.
 func SanitizeRawString(value string) string {
-	clipped, truncated := clipBytes([]byte(value))
-	return sanitizeRawBytes(clipped, truncated)
+	return defaultSanitizer.SanitizeRawString(value)
+}
+
+// SanitizeRawString caps and best-effort redacts unstructured payload strings.
+func (s Sanitizer) SanitizeRawString(value string) string {
+	clipped, truncated := s.clipBytes([]byte(value))
+	return s.sanitizeRawBytes(clipped, truncated)
 }
 
 // SanitizeURL redacts sensitive query parameters and user-info passwords.
 func SanitizeURL(rawURL string) string {
+	return defaultSanitizer.SanitizeURL(rawURL)
+}
+
+// SanitizeURL redacts sensitive query parameters and user-info passwords.
+func (s Sanitizer) SanitizeURL(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return SanitizeRawString(rawURL)
+		return s.SanitizeRawString(rawURL)
 	}
 
 	if parsed.User != nil {
@@ -93,7 +150,7 @@ func SanitizeURL(rawURL string) string {
 
 	query := parsed.Query()
 	for key := range query {
-		if IsSensitiveKey(key) {
+		if s.IsSensitiveKey(key) {
 			query[key] = []string{RedactedValue}
 		}
 	}
@@ -104,14 +161,24 @@ func SanitizeURL(rawURL string) string {
 
 // SanitizeHTTPHeader copies and redacts net/http headers for logging.
 func SanitizeHTTPHeader(headers http.Header) map[string]any {
-	return SanitizeStringSliceMap(map[string][]string(headers))
+	return defaultSanitizer.SanitizeHTTPHeader(headers)
+}
+
+// SanitizeHTTPHeader copies and redacts net/http headers for logging.
+func (s Sanitizer) SanitizeHTTPHeader(headers http.Header) map[string]any {
+	return s.SanitizeStringSliceMap(map[string][]string(headers))
 }
 
 // SanitizeStringSliceMap copies and redacts string-slice keyed values such as headers or metadata.
 func SanitizeStringSliceMap(values map[string][]string) map[string]any {
+	return defaultSanitizer.SanitizeStringSliceMap(values)
+}
+
+// SanitizeStringSliceMap copies and redacts string-slice keyed values such as headers or metadata.
+func (s Sanitizer) SanitizeStringSliceMap(values map[string][]string) map[string]any {
 	sanitized := make(map[string]any, len(values))
 	for key, value := range values {
-		if IsSensitiveKey(key) {
+		if s.IsSensitiveKey(key) {
 			sanitized[key] = RedactedValue
 			continue
 		}
@@ -127,79 +194,104 @@ func SanitizeStringSliceMap(values map[string][]string) map[string]any {
 
 // SanitizeHeaderMap copies and redacts generic header maps.
 func SanitizeHeaderMap(headers map[string]any) map[string]any {
+	return defaultSanitizer.SanitizeHeaderMap(headers)
+}
+
+// SanitizeHeaderMap copies and redacts generic header maps.
+func (s Sanitizer) SanitizeHeaderMap(headers map[string]any) map[string]any {
 	sanitized := make(map[string]any, len(headers))
 	for key, value := range headers {
-		if IsSensitiveKey(key) {
+		if s.IsSensitiveKey(key) {
 			sanitized[key] = RedactedValue
 			continue
 		}
-		sanitized[key] = SanitizeValue(value)
+		sanitized[key] = s.SanitizeValue(value)
 	}
 	return sanitized
 }
 
 // SanitizeValue recursively redacts fields whose keys commonly carry secrets.
 func SanitizeValue(value any) any {
+	return defaultSanitizer.SanitizeValue(value)
+}
+
+// SanitizeValue recursively redacts fields whose keys commonly carry secrets.
+func (s Sanitizer) SanitizeValue(value any) any {
 	switch v := value.(type) {
 	case map[string]any:
-		sanitized := make(map[string]any, len(v))
-		for key, item := range v {
-			if IsSensitiveKey(key) {
-				sanitized[key] = RedactedValue
-				continue
-			}
-			sanitized[key] = SanitizeValue(item)
-		}
-		return sanitized
+		return s.sanitizeAnyMap(v)
 	case logrus.Fields:
-		sanitized := logrus.Fields{}
-		for key, item := range v {
-			if IsSensitiveKey(key) {
-				sanitized[key] = RedactedValue
-				continue
-			}
-			sanitized[key] = SanitizeValue(item)
-		}
-		return sanitized
+		return s.sanitizeLogrusFields(v)
 	case map[string]string:
-		sanitized := make(map[string]string, len(v))
-		for key, item := range v {
-			if IsSensitiveKey(key) {
-				sanitized[key] = RedactedValue
-				continue
-			}
-			sanitized[key] = item
-		}
-		return sanitized
+		return s.sanitizeStringMap(v)
 	case []any:
-		sanitized := make([]any, len(v))
-		for i, item := range v {
-			sanitized[i] = SanitizeValue(item)
-		}
-		return sanitized
+		return s.sanitizeAnySlice(v)
 	default:
 		return value
 	}
 }
 
-func IsSensitiveKey(key string) bool {
-	normalized := normalizeKey(key)
-	for _, fragment := range sensitiveKeyFragments {
-		if strings.Contains(normalized, fragment) {
-			return true
-		}
+func (s Sanitizer) sanitizeAnyMap(values map[string]any) map[string]any {
+	sanitized := make(map[string]any, len(values))
+	for key, item := range values {
+		sanitized[key] = s.sanitizeKeyedValue(key, item)
 	}
-	return false
+	return sanitized
 }
 
-func clipBytes(body []byte) ([]byte, bool) {
-	if len(body) <= DefaultMaxLoggedBodyBytes {
+func (s Sanitizer) sanitizeLogrusFields(values logrus.Fields) logrus.Fields {
+	sanitized := logrus.Fields{}
+	for key, item := range values {
+		sanitized[key] = s.sanitizeKeyedValue(key, item)
+	}
+	return sanitized
+}
+
+func (s Sanitizer) sanitizeStringMap(values map[string]string) map[string]string {
+	sanitized := make(map[string]string, len(values))
+	for key, item := range values {
+		if s.IsSensitiveKey(key) {
+			sanitized[key] = RedactedValue
+			continue
+		}
+		sanitized[key] = item
+	}
+	return sanitized
+}
+
+func (s Sanitizer) sanitizeAnySlice(values []any) []any {
+	sanitized := make([]any, len(values))
+	for i, item := range values {
+		sanitized[i] = s.SanitizeValue(item)
+	}
+	return sanitized
+}
+
+func (s Sanitizer) sanitizeKeyedValue(key string, value any) any {
+	if s.IsSensitiveKey(key) {
+		return RedactedValue
+	}
+	return s.SanitizeValue(value)
+}
+
+// IsSensitiveKey reports whether a key should have its value redacted.
+func IsSensitiveKey(key string) bool {
+	return defaultSanitizer.IsSensitiveKey(key)
+}
+
+// IsSensitiveKey reports whether a key should have its value redacted.
+func (s Sanitizer) IsSensitiveKey(key string) bool {
+	return s.keyStrategy.IsSensitiveKey(key)
+}
+
+func (s Sanitizer) clipBytes(body []byte) ([]byte, bool) {
+	if len(body) <= s.maxBodyBytes {
 		return body, false
 	}
-	return body[:DefaultMaxLoggedBodyBytes], true
+	return body[:s.maxBodyBytes], true
 }
 
-func sanitizeRawBytes(body []byte, truncated bool) string {
+func (s Sanitizer) sanitizeRawBytes(body []byte, truncated bool) string {
 	sanitized := string(body)
 	sanitized = jsonSensitiveValuePattern.ReplaceAllString(sanitized, `${1}"`+RedactedValue+`"`)
 	sanitized = formSensitiveValuePattern.ReplaceAllString(sanitized, `${1}${2}`+RedactedValue)

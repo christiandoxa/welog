@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// BuildTargetLogFields builds sanitized log fields for an outbound target call.
 func BuildTargetLogFields(req model.TargetRequest, res model.TargetResponse) logrus.Fields {
 	requestField, requestBodyString := BuildBodyLogFields(req.Body)
 	responseField, responseBodyString := BuildBodyLogFields(res.Body)

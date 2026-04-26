@@ -2,6 +2,7 @@ package model
 
 import "time"
 
+// TargetRequest describes an outbound request recorded inside a Welog request log.
 type TargetRequest struct {
 	URL         string
 	Method      string

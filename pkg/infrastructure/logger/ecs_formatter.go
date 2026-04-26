@@ -41,63 +41,91 @@ type ecsErrorObject struct {
 
 // Format converts a logrus entry into ECS-compliant JSON.
 func (f *ECSFormatter) Format(entry *logrus.Entry) ([]byte, error) {
-	datahint := len(entry.Data)
-	if f.DataKey != "" {
-		datahint = 2
-	}
-
-	data := make(logrus.Fields, datahint)
-	if len(entry.Data) > 0 {
-		extraData := data
-		if f.DataKey != "" {
-			extraData = make(logrus.Fields, len(entry.Data))
-		}
-
-		for k, v := range entry.Data {
-			switch k {
-			case logrus.ErrorKey:
-				if err, ok := v.(error); ok {
-					data["error"] = buildECSErrorObject(err)
-					continue
-				}
-			}
-
-			extraData[k] = v
-		}
-
-		if f.DataKey != "" && len(extraData) > 0 {
-			data[f.DataKey] = extraData
-		}
-	}
-
-	if entry.HasCaller() {
-		functionName, fileName, lineNumber := formatCaller(entry.Caller, f.CallerPrettyfier)
-		if functionName != "" {
-			data["log.origin.function"] = functionName
-		}
-		if fileName != "" {
-			data["log.origin.file.name"] = fileName
-		}
-		if lineNumber > 0 {
-			data["log.origin.file.line"] = lineNumber
-		}
-	}
-
+	data := f.buildFields(entry)
 	data["ecs.version"] = ecsVersion
 
 	ecopy := *entry
 	ecopy.Data = data
 	ecopy.Caller = nil
 
-	formatter := logrus.JSONFormatter{
+	return f.jsonFormatter().Format(&ecopy)
+}
+
+func (f *ECSFormatter) buildFields(entry *logrus.Entry) logrus.Fields {
+	data := make(logrus.Fields, f.fieldCapacity(entry))
+	f.addEntryData(data, entry.Data)
+	f.addCallerFields(data, entry)
+	return data
+}
+
+func (f *ECSFormatter) fieldCapacity(entry *logrus.Entry) int {
+	if f.DataKey != "" {
+		return 2
+	}
+	return len(entry.Data)
+}
+
+func (f *ECSFormatter) addEntryData(data logrus.Fields, entryData logrus.Fields) {
+	if len(entryData) == 0 {
+		return
+	}
+
+	extraData := data
+	if f.DataKey != "" {
+		extraData = make(logrus.Fields, len(entryData))
+	}
+
+	for key, value := range entryData {
+		if f.addErrorField(data, key, value) {
+			continue
+		}
+		extraData[key] = value
+	}
+
+	if f.DataKey != "" && len(extraData) > 0 {
+		data[f.DataKey] = extraData
+	}
+}
+
+func (f *ECSFormatter) addErrorField(data logrus.Fields, key string, value any) bool {
+	if key != logrus.ErrorKey {
+		return false
+	}
+
+	err, ok := value.(error)
+	if !ok {
+		return false
+	}
+
+	data["error"] = buildECSErrorObject(err)
+	return true
+}
+
+func (f *ECSFormatter) addCallerFields(data logrus.Fields, entry *logrus.Entry) {
+	if !entry.HasCaller() {
+		return
+	}
+
+	functionName, fileName, lineNumber := formatCaller(entry.Caller, f.CallerPrettyfier)
+	if functionName != "" {
+		data["log.origin.function"] = functionName
+	}
+	if fileName != "" {
+		data["log.origin.file.name"] = fileName
+	}
+	if lineNumber > 0 {
+		data["log.origin.file.line"] = lineNumber
+	}
+}
+
+func (f *ECSFormatter) jsonFormatter() *logrus.JSONFormatter {
+	return &logrus.JSONFormatter{
 		TimestampFormat:   ecsTimestampFormat,
 		DisableHTMLEscape: f.DisableHTMLEscape,
 		FieldMap:          ecsFieldMap,
 		CallerPrettyfier:  f.CallerPrettyfier,
 		PrettyPrint:       f.PrettyPrint,
 	}
-
-	return formatter.Format(&ecopy)
 }
 
 func buildECSErrorObject(err error) ecsErrorObject {

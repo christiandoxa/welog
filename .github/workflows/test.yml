@@ -1,5 +1,8 @@
 name: Go Test
 
+env:
+  GO_VERSION: 1.26.x
+
 on:
   push:
     branches:
@@ -15,25 +18,16 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.25.0
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Install Go dependencies
         run: go mod download
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
 
       - name: Clone docker-elk repository
         run: git clone https://github.com/deviantony/docker-elk.git

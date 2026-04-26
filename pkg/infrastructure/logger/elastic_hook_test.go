@@ -169,6 +169,16 @@ func TestEnsureIndexExists(t *testing.T) {
 		assert.True(t, createCalled)
 	})
 
+	t.Run("exists status error", func(t *testing.T) {
+		client := newTestClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return newElasticResponse(req, http.StatusInternalServerError, `{"error":"boom"}`), nil
+		}))
+
+		err := ensureIndexExists(client, func() string { return "welog-test" })
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot check index")
+	})
+
 	t.Run("create request error", func(t *testing.T) {
 		client := newTestClient(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			if req.Method == http.MethodHead {

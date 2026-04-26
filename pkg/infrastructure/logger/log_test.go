@@ -1195,3 +1195,25 @@ func TestCoverSrcCloseErrorBranch(t *testing.T) {
 	//line github.com/christiandoxa/welog/pkg/infrastructure/logger/log.go:404
 	_ = 0
 }
+
+//line log_test.go:1174
+func TestStopAsyncHooksClosesUniqueAsyncHooks(t *testing.T) {
+	async := &asyncHook{
+		hook:  &stubHook{entries: make(chan *logrus.Entry, 1)},
+		queue: make(chan *logrus.Entry),
+	}
+	plain := &stubHook{entries: make(chan *logrus.Entry, 1)}
+
+	stopAsyncHooks(logrus.LevelHooks{
+		logrus.InfoLevel:  []logrus.Hook{async, plain},
+		logrus.ErrorLevel: []logrus.Hook{async},
+	})
+
+	assert.True(t, async.closed)
+	_, open := <-async.queue
+	assert.False(t, open)
+
+	stopAsyncHooks(logrus.LevelHooks{
+		logrus.InfoLevel: []logrus.Hook{async},
+	})
+}

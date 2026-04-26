@@ -158,6 +158,11 @@ func TestFetchRequestIDFromContextValue(t *testing.T) {
 	assert.Equal(t, "ctx-id", fetchRequestID(ctx))
 }
 
+func TestContextValueNilContext(t *testing.T) {
+	var nilContext context.Context
+	assert.Nil(t, contextValue(nilContext, grpcRequestIDContextKey, generalkey.RequestID))
+}
+
 func TestFetchRequestIDFromMetadataHeader(t *testing.T) {
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-request-id", "meta-id"))
 	assert.Equal(t, "meta-id", fetchRequestID(ctx))

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/user"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/christiandoxa/welog/pkg/constant/generalkey"
 	"github.com/christiandoxa/welog/pkg/infrastructure/logger"
 	"github.com/christiandoxa/welog/pkg/model"
+	"github.com/christiandoxa/welog/pkg/util"
 	"github.com/gin-gonic/gin"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
@@ -411,4 +413,87 @@ func TestLogGinClientMissingExisting(t *testing.T) {
 	clientLog, exists := c.Get(generalkey.ClientLog)
 	assert.True(t, exists)
 	assert.Len(t, clientLog.([]logrus.Fields), 1)
+}
+
+func TestResponseBodyWriterWriteString(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	body := newResponseBodyCapture()
+	writer := responseBodyWriter{ResponseWriter: c.Writer, body: body}
+
+	n, err := writer.WriteString("hello")
+
+	assert.NoError(t, err)
+	assert.Equal(t, len("hello"), n)
+	assert.Equal(t, "hello", body.buf.String())
+	assert.Equal(t, "hello", w.Body.String())
+}
+
+func TestResponseBodyCaptureLimitBranches(t *testing.T) {
+	body := &responseBodyCapture{limit: 3}
+
+	n, err := body.Write([]byte("abcdef"))
+	assert.NoError(t, err)
+	assert.Equal(t, 6, n)
+	assert.Equal(t, "abcd", string(body.Bytes()))
+
+	n, err = body.Write([]byte("zz"))
+	assert.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, "abcd", string(body.Bytes()))
+
+	stringBody := &responseBodyCapture{limit: 2}
+	n, err = stringBody.WriteString("abcdef")
+	assert.NoError(t, err)
+	assert.Equal(t, 6, n)
+	assert.Equal(t, "abc", stringBody.buf.String())
+
+	n, err = stringBody.WriteString("zz")
+	assert.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, "abc", stringBody.buf.String())
+}
+
+func TestFiberFallbackHelpers(t *testing.T) {
+	SetConfig(welogConfig)
+
+	app := fiber.New()
+	app.Get("/", func(c *fiber.Ctx) error {
+		c.Locals(generalkey.RequestID, "fallback-rid")
+
+		entry := fiberLogger(c)
+		assert.Equal(t, "fallback-rid", entry.Data[generalkey.RequestID])
+		assert.Empty(t, fiberClientLog(c))
+
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/", nil), 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusNoContent, resp.StatusCode)
+}
+
+func TestLogGinFallbacksAndNilBody(t *testing.T) {
+	SetConfig(welogConfig)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/path?token=secret", nil)
+	c.Request.Body = nil
+	c.Set(generalkey.RequestID, "gin-fallback-rid")
+
+	logGin(c, newResponseBodyCapture(), time.Now())
+
+	assert.NotNil(t, c.Request.Body)
+}
+
+func TestReadBodyForLogNilAndLimit(t *testing.T) {
+	body, err := readBodyForLog(nil)
+	assert.NoError(t, err)
+	assert.Nil(t, body)
+
+	longBody := strings.Repeat("a", util.DefaultMaxLoggedBodyBytes+2)
+	body, err = readBodyForLog(strings.NewReader(longBody))
+	assert.NoError(t, err)
+	assert.Len(t, body, util.DefaultMaxLoggedBodyBytes+1)
 }
